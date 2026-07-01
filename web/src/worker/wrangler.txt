@@ -1,0 +1,33 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# LyfeBlood — Cloudflare Workers + D1 Config   (save as  wrangler.toml  locally)
+# Deploy: wrangler deploy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name               = "lyfeblood-api"
+main               = "src/worker/index.ts"          # compiled by wrangler
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# ── D1 Database ────────────────────────────────────────────────────────────────
+# Step 1:  wrangler d1 create lyfeblood-db
+# Step 2:  copy the output database_id into the field below
+# Step 3:  wrangler d1 execute lyfeblood-db --file=src/worker/schema.sql --remote
+[[d1_databases]]
+binding       = "DB"
+database_name = "lyfeblood-db"
+database_id   = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# ── Secrets (never commit plaintext values) ────────────────────────────────────
+# wrangler secret put JWT_SECRET
+[vars]
+ENVIRONMENT = "production"
+
+# ── Optional: custom domain route ─────────────────────────────────────────────
+# [[routes]]
+# pattern  = "api.lyfeblood.ng/*"
+# zone_name = "lyfeblood.ng"
+
+# ── Local dev ──────────────────────────────────────────────────────────────────
+[dev]
+port           = 8787
+local_protocol = "http"

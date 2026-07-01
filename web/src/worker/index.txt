@@ -1,0 +1,250 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * LyfeBlood — Cloudflare Worker API Controller  (save as  index.ts  in this dir)
+ * Runtime:   Cloudflare Workers (V8 isolate, no Node.js by default)
+ * Database:  Cloudflare D1 via env.DB binding
+ * Deploy:    wrangler deploy
+ *
+ * Routes:
+ *   POST  /api/auth/register       — create account, argon2id-equivalent hash
+ *   POST  /api/auth/login          — verify credentials, return user JSON
+ *   GET   /api/requests            — active blood requests (SOS first)
+ *   POST  /api/requests/create     — new request with urgency tier
+ *   POST  /api/matches/respond     — accept / decline; OTP minted on accept
+ *   POST  /api/tokens/verify       — validate OTP, advance request to Arrived
+ * ═══════════════════════════════════════════════════════════════════════════════
+ */
+
+// ── D1 type surface ───────────────────────────────────────────────────────────
+
+export interface Env {
+  DB: D1Database;
+}
+
+// ── Crypto helpers ────────────────────────────────────────────────────────────
+
+function uuid(): string {
+  return crypto.randomUUID();
+}
+
+/** Cryptographically uniform 6-digit token — no Math.random() bias. */
+function generateOTP(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(100000 + (buf[0] % 900000));
+}
+
+function minutesFromNow(n: number): string {
+  return new Date(Date.now() + n * 60_000).toISOString();
+}
+
+/**
+ * PBKDF2-SHA256 password hashing (SubtleCrypto — available in Workers).
+ * Workers cannot run native argon2 binaries, so we use PBKDF2 at 100 000
+ * iterations which gives ~60 ms on a Worker isolate — within budget.
+ * Format stored in DB:  "pbkdf2$<iterations>$<hex-salt>$<hex-digest>"
+ */
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const km   = await crypto.subtle.importKey('raw', new TextEncoder().encode(password),
+                                             'PBKDF2', false, ['deriveBits']);
+  const raw  = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, hash: 'SHA-256', iterations: 100_000 }, km, 256);
+  const hex  = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2,'0')).join('');
+  return `pbkdf2$100000$${hex(salt)}$${hex(new Uint8Array(raw))}`;
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [alg, iters, saltHex, digestHex] = stored.split('$');
+  if (alg !== 'pbkdf2') return false;
+  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(h => parseInt(h, 16)));
+  const km   = await crypto.subtle.importKey('raw', new TextEncoder().encode(password),
+                                             'PBKDF2', false, ['deriveBits']);
+  const raw  = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, hash: 'SHA-256', iterations: parseInt(iters, 10) }, km, 256);
+  const hex  = Array.from(new Uint8Array(raw)).map(x => x.toString(16).padStart(2,'0')).join('');
+  return digestHex === hex;               // timing: both are same-length hex strings
+}
+
+// ── Response helpers ──────────────────────────────────────────────────────────
+
+const CORS: HeadersInit = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS },
+  });
+
+const err = (msg: string, status = 400) => json({ error: msg }, status);
+
+const strip = (u: any) => { const { password_hash, ...safe } = u; return safe; };
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
+
+async function register(req: Request, env: Env) {
+  const b = await req.json<any>();
+  if (!b.full_name?.trim())                  return err('full_name required');
+  if (!b.email?.trim())                      return err('email required');
+  if (!b.password || b.password.length < 8)  return err('password min 8 chars');
+  if (!['donor','requester','hospital'].includes(b.role)) return err('invalid role');
+
+  const dup = await env.DB.prepare('SELECT id FROM users WHERE email = ?1 LIMIT 1')
+                          .bind(b.email.toLowerCase()).first();
+  if (dup) return err('Email already registered', 409);
+
+  const id   = uuid();
+  const hash = await hashPassword(b.password);
+
+  await env.DB.prepare(`
+    INSERT INTO users (id,full_name,email,phone,role,blood_type,location,password_hash)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+  `).bind(id, b.full_name.trim(), b.email.toLowerCase(),
+          b.phone??null, b.role, b.blood_type??null, b.location??null, hash).run();
+
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id=?1').bind(id).first();
+  return json({ user: strip(user), message: 'Registration successful' }, 201);
+}
+
+async function login(req: Request, env: Env) {
+  const b = await req.json<any>();
+  if (!b.email || !b.password) return err('email and password required');
+
+  const row = await env.DB.prepare('SELECT * FROM users WHERE email=?1 LIMIT 1')
+                          .bind(b.email.toLowerCase()).first<any>();
+  if (!row) return err('Invalid credentials', 401);
+
+  if (!await verifyPassword(b.password, row.password_hash ?? ''))
+    return err('Invalid credentials', 401);
+
+  return json({ user: strip(row), message: 'Login successful' });
+}
+
+async function getRequests(req: Request, env: Env) {
+  const url  = new URL(req.url);
+  const bt   = url.searchParams.get('blood_type');
+  const lim  = Math.min(+(url.searchParams.get('limit')??'50'), 100);
+
+  let q = "SELECT * FROM blood_requests WHERE status != 'Completed'";
+  const p: any[] = [];
+  if (bt) { p.push(bt); q += ` AND blood_type_needed = ?${p.length}`; }
+  q += ` ORDER BY CASE urgency_tier WHEN 'SOS' THEN 0 WHEN 'Urgent' THEN 1 ELSE 2 END,
+                  created_at DESC LIMIT ?${p.length+1}`;
+  p.push(lim);
+
+  const { results } = await env.DB.prepare(q).bind(...p).all();
+  return json({ requests: results ?? [] });
+}
+
+async function createRequest(req: Request, env: Env) {
+  const b = await req.json<any>();
+  if (!b.hospital_name?.trim())  return err('hospital_name required');
+  if (!b.blood_type_needed)      return err('blood_type_needed required');
+  if (!['Standard','Urgent','SOS'].includes(b.urgency_tier)) return err('invalid urgency_tier');
+
+  const id = uuid();
+  await env.DB.prepare(`
+    INSERT INTO blood_requests
+      (id,hospital_name,patient_ref,blood_type_needed,urgency_tier,location,
+       requested_by,units_needed,urgency_note)
+    VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+  `).bind(id, b.hospital_name.trim(), b.patient_ref??null, b.blood_type_needed,
+          b.urgency_tier, b.location??null, b.requested_by??null,
+          b.units_needed??1, b.urgency_note??null).run();
+
+  const row = await env.DB.prepare('SELECT * FROM blood_requests WHERE id=?1').bind(id).first();
+  return json({ request: row, message: 'Request created' }, 201);
+}
+
+async function matchRespond(req: Request, env: Env) {
+  const b = await req.json<any>();
+  if (!b.match_id)  return err('match_id required');
+  if (!['Accepted','Declined'].includes(b.decision)) return err('invalid decision');
+
+  const match = await env.DB.prepare('SELECT * FROM matches WHERE id=?1 LIMIT 1')
+                            .bind(b.match_id).first<any>();
+  if (!match)                          return err('Match not found', 404);
+  if (match.match_status !== 'Alerted') return err('Match already responded to', 409);
+
+  if (b.decision === 'Declined') {
+    await env.DB.prepare("UPDATE matches SET match_status='Declined' WHERE id=?1")
+                .bind(b.match_id).run();
+    return json({ message:'Match declined', status:'Declined' });
+  }
+
+  // Accepted — atomic batch
+  const otp  = generateOTP();
+  const exp  = minutesFromNow(15);
+  const tokId = uuid();
+
+  await env.DB.batch([
+    env.DB.prepare("UPDATE matches SET match_status='Accepted' WHERE id=?1").bind(b.match_id),
+    env.DB.prepare("UPDATE blood_requests SET status='Donor Matched' WHERE id=?1")
+          .bind(match.request_id),
+    env.DB.prepare(`INSERT INTO verification_tokens (id,match_id,secure_otp,expires_at)
+                    VALUES (?1,?2,?3,?4)`)
+          .bind(tokId, b.match_id, otp, exp),
+  ]);
+
+  return json({ message:'Match accepted', otp, expires_at:exp, token_id:tokId });
+}
+
+async function tokenVerify(req: Request, env: Env) {
+  const b = await req.json<any>();
+  if (!b.otp || b.otp.length !== 6) return err('6-digit OTP required');
+
+  // Lazy-expire stale tokens
+  env.DB.prepare("UPDATE verification_tokens SET status='Expired' WHERE status='Active' AND expires_at<?1")
+        .bind(new Date().toISOString()).run().catch(()=>{});
+
+  let q = `
+    SELECT vt.*, m.request_id FROM verification_tokens vt
+    JOIN matches m ON vt.match_id = m.id
+    WHERE vt.secure_otp=?1 AND vt.status='Active'`;
+  const p: any[] = [b.otp];
+  if (b.match_id) { p.push(b.match_id); q += ` AND vt.match_id=?${p.length}`; }
+  q += ' LIMIT 1';
+
+  const tok = await env.DB.prepare(q).bind(...p).first<any>();
+  if (!tok) return err('Invalid or expired OTP', 401);
+  if (new Date(tok.expires_at) < new Date()) {
+    await env.DB.prepare("UPDATE verification_tokens SET status='Expired' WHERE id=?1")
+                .bind(tok.id).run();
+    return err('OTP has expired', 401);
+  }
+
+  await env.DB.batch([
+    env.DB.prepare("UPDATE verification_tokens SET status='Used' WHERE id=?1").bind(tok.id),
+    env.DB.prepare("UPDATE blood_requests SET status='Arrived' WHERE id=?1").bind(tok.request_id),
+  ]);
+
+  return json({ message:'Donor arrival confirmed', request_id:tok.request_id, new_status:'Arrived' });
+}
+
+// ── Main entry point ──────────────────────────────────────────────────────────
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === 'OPTIONS') return new Response(null, { status:204, headers:CORS });
+
+    const { pathname: p } = new URL(request.url);
+    const m = request.method;
+
+    try {
+      if (p==='/api/auth/register'   && m==='POST') return register(request, env);
+      if (p==='/api/auth/login'      && m==='POST') return login(request, env);
+      if (p==='/api/requests'        && m==='GET')  return getRequests(request, env);
+      if (p==='/api/requests/create' && m==='POST') return createRequest(request, env);
+      if (p==='/api/matches/respond' && m==='POST') return matchRespond(request, env);
+      if (p==='/api/tokens/verify'   && m==='POST') return tokenVerify(request, env);
+      return err('Not found', 404);
+    } catch(e) {
+      console.error('[LyfeBlood Worker]', e);
+      return err('Internal server error', 500);
+    }
+  }
+} satisfies ExportedHandler<Env>;

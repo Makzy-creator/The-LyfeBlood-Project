@@ -1,0 +1,77 @@
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- LyfeBlood · Cloudflare D1 Production Schema  (SQLite / D1 dialect)
+-- Save this file as  schema.sql  locally, then run:
+--   wrangler d1 execute lyfeblood-db --file=schema.sql --remote
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+-- ── 1. users ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+  id                  TEXT     NOT NULL PRIMARY KEY,
+  full_name           TEXT     NOT NULL,
+  email               TEXT     NOT NULL UNIQUE COLLATE NOCASE,
+  phone               TEXT,
+  role                TEXT     NOT NULL
+                               CHECK (role IN ('donor', 'requester', 'hospital')),
+  blood_type          TEXT,
+  location            TEXT,
+  password_hash       TEXT,                   -- PBKDF2-SHA256 (Workers SubtleCrypto)
+  availability_status INTEGER  NOT NULL DEFAULT 0,
+  is_verified         INTEGER  NOT NULL DEFAULT 0,
+  created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_users_email      ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_blood_type ON users (blood_type);
+CREATE INDEX IF NOT EXISTS idx_users_role       ON users (role);
+CREATE INDEX IF NOT EXISTS idx_users_avail      ON users (availability_status);
+
+-- ── 2. blood_requests ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS blood_requests (
+  id                TEXT     NOT NULL PRIMARY KEY,
+  hospital_name     TEXT     NOT NULL,
+  patient_ref       TEXT,
+  blood_type_needed TEXT     NOT NULL,
+  urgency_tier      TEXT     NOT NULL CHECK (urgency_tier IN ('Standard', 'Urgent', 'SOS')),
+  status            TEXT     NOT NULL DEFAULT 'Pending'
+                             CHECK (status IN ('Pending', 'Donor Matched', 'Arrived', 'Completed')),
+  location          TEXT,
+  requested_by      TEXT     REFERENCES users (id) ON DELETE SET NULL,
+  units_needed      INTEGER  NOT NULL DEFAULT 1,
+  units_fulfilled   INTEGER  NOT NULL DEFAULT 0,
+  urgency_note      TEXT,
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_requests_status     ON blood_requests (status);
+CREATE INDEX IF NOT EXISTS idx_requests_blood_type ON blood_requests (blood_type_needed);
+CREATE INDEX IF NOT EXISTS idx_requests_urgency    ON blood_requests (urgency_tier);
+CREATE INDEX IF NOT EXISTS idx_requests_created    ON blood_requests (created_at DESC);
+
+-- ── 3. matches ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS matches (
+  id           TEXT     NOT NULL PRIMARY KEY,
+  request_id   TEXT     NOT NULL REFERENCES blood_requests (id) ON DELETE CASCADE,
+  donor_id     TEXT     NOT NULL REFERENCES users (id)          ON DELETE CASCADE,
+  match_status TEXT     NOT NULL DEFAULT 'Alerted'
+                                 CHECK (match_status IN ('Alerted', 'Accepted', 'Declined')),
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_matches_request_id ON matches (request_id);
+CREATE INDEX IF NOT EXISTS idx_matches_donor_id   ON matches (donor_id);
+CREATE INDEX IF NOT EXISTS idx_matches_status     ON matches (match_status);
+
+-- ── 4. verification_tokens ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS verification_tokens (
+  id         TEXT     NOT NULL PRIMARY KEY,
+  match_id   TEXT     NOT NULL REFERENCES matches (id) ON DELETE CASCADE,
+  secure_otp TEXT     NOT NULL,
+  expires_at DATETIME NOT NULL,
+  status     TEXT     NOT NULL DEFAULT 'Active'
+                               CHECK (status IN ('Active', 'Used', 'Expired')),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_tokens_match_id ON verification_tokens (match_id);
+CREATE INDEX IF NOT EXISTS idx_tokens_otp      ON verification_tokens (secure_otp);
+CREATE INDEX IF NOT EXISTS idx_tokens_status   ON verification_tokens (status);
+CREATE INDEX IF NOT EXISTS idx_tokens_expires  ON verification_tokens (expires_at);
