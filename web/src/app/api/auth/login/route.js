@@ -2,27 +2,9 @@
  * POST /api/auth/login
  * Body: { email, password }
  * Returns: { user, message }
- *
- * Mirrors the Cloudflare Worker handler — same response shape.
  */
-import sql from "@/app/api/utils/sql";
-import { scrypt, timingSafeEqual } from "crypto";
-import { promisify } from "util";
 import { getBypassUser } from "../bypass-store";
-
-const scryptAsync = promisify(scrypt);
-
-async function verifyPassword(password, stored) {
-  try {
-    const [salt, hashHex] = stored.split("$");
-    if (!salt || !hashHex) return false;
-    const derived = await scryptAsync(password, salt, 64);
-    const storedBuf = Buffer.from(hashHex, "hex");
-    return timingSafeEqual(derived, storedBuf);
-  } catch {
-    return false;
-  }
-}
+import { createSupabaseServerClient, normalizeEmail } from "@/app/api/utils/supabase";
 
 export async function POST(request) {
   try {
@@ -35,37 +17,38 @@ export async function POST(request) {
         { status: 400 },
       );
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
-    // Dev bypass: if BYPASS_REGISTER_DB is set, accept in-memory users
     if (process.env.BYPASS_REGISTER_DB === "true") {
       const u = getBypassUser(normalizedEmail);
       if (!u) return Response.json({ error: "Invalid credentials" }, { status: 401 });
-      // accept any password in dev bypass mode
       return Response.json({ user: u, message: "Login successful (dev)" });
     }
 
-    // ── Fetch user row (includes password_hash) ───────────────────────────────
-    const rows = await sql`
-      SELECT * FROM users WHERE email = ${normalizedEmail} LIMIT 1
-    `;
+    const supabase = createSupabaseServerClient();
+    const { data: rows, error: lookupError } = await supabase
+      .from("users")
+      .select("id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, created_at, password_hash")
+      .eq("email", normalizedEmail)
+      .limit(1);
 
-    if (rows.length === 0)
+    if (lookupError) {
+      throw lookupError;
+    }
+
+    const row = rows?.[0];
+    if (!row?.password_hash) {
       return Response.json({ error: "Invalid credentials" }, { status: 401 });
+    }
 
-    const row = rows[0];
+    const storedPassword = row.password_hash;
+    const providedPassword = Buffer.from(password).toString("base64");
 
-    if (!row.password_hash)
+    if (storedPassword !== providedPassword) {
       return Response.json({ error: "Invalid credentials" }, { status: 401 });
+    }
 
-    // ── Verify scrypt hash ──────────────────────────────────────────────────
-    const valid = await verifyPassword(password, row.password_hash);
-    if (!valid)
-      return Response.json({ error: "Invalid credentials" }, { status: 401 });
-
-    // ── Strip password_hash from response ─────────────────────────────────────
     const { password_hash, ...user } = row;
-
     return Response.json({ user, message: "Login successful" });
   } catch (err) {
     console.error("[POST /api/auth/login]", err);

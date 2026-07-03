@@ -3,9 +3,19 @@
  * Query params: blood_type?, limit? (max 100, default 50)
  *
  * Returns all non-Completed blood_requests, SOS tier first.
- * Mirrors the Cloudflare Worker handler exactly.
  */
-import sql from "@/app/api/utils/sql";
+import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+
+function sortPriority(urgencyTier) {
+  switch (urgencyTier) {
+    case "SOS":
+      return 0;
+    case "Urgent":
+      return 1;
+    default:
+      return 2;
+  }
+}
 
 export async function GET(request) {
   try {
@@ -16,32 +26,29 @@ export async function GET(request) {
       100,
     );
 
-    let requests;
+    const supabase = createSupabaseServerClient();
+    let query = supabase
+      .from("blood_requests")
+      .select("*")
+      .neq("status", "Completed")
+      .order("created_at", { ascending: false });
 
     if (bloodFilter) {
-      // Filtered by blood type
-      requests = await sql(
-        `SELECT * FROM blood_requests
-         WHERE  status != 'Completed'
-           AND  blood_type_needed = $1
-         ORDER BY
-           CASE urgency_tier WHEN 'SOS' THEN 0 WHEN 'Urgent' THEN 1 ELSE 2 END,
-           created_at DESC
-         LIMIT $2`,
-        [bloodFilter, limit],
-      );
-    } else {
-      // All active requests
-      requests = await sql(
-        `SELECT * FROM blood_requests
-         WHERE  status != 'Completed'
-         ORDER BY
-           CASE urgency_tier WHEN 'SOS' THEN 0 WHEN 'Urgent' THEN 1 ELSE 2 END,
-           created_at DESC
-         LIMIT $1`,
-        [limit],
-      );
+      query = query.eq("blood_type_needed", bloodFilter);
     }
+
+    const { data, error } = await query.limit(limit);
+
+    if (error) {
+      throw error;
+    }
+
+    const requests = (data ?? []).sort((a, b) => {
+      const aPriority = sortPriority(a?.urgency_tier);
+      const bPriority = sortPriority(b?.urgency_tier);
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      return new Date(b?.created_at ?? 0).getTime() - new Date(a?.created_at ?? 0).getTime();
+    });
 
     return Response.json({ requests });
   } catch (err) {
