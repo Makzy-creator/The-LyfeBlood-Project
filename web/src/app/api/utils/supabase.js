@@ -39,7 +39,7 @@ export function buildAuthUserPayload(authUser, fallback = {}) {
 }
 
 export function createSupabaseServerClient() {
-  const apiKey = supabaseAnonKey || supabaseServiceRoleKey;
+  const apiKey = supabaseServiceRoleKey || supabaseAnonKey;
 
   if (!supabaseUrl || !apiKey) {
     throw new Error(

@@ -1,34 +1,50 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
-  Bell,
   Droplets,
   MapPin,
   Clock,
   Award,
   ChevronRight,
-  Zap,
   X,
 } from "lucide-react";
 import TopAppBar from "@/components/ui/TopAppBar";
 import BottomNavBar from "@/components/ui/BottomNavBar";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import RequestCard from "@/components/ui/RequestCard";
-import PrimaryButton from "@/components/ui/PrimaryButton";
-import { useApp, MATCH_MOCK } from "@/context/AppContext";
+import { useApp } from "@/context/AppContext";
+import { apiGetMatches } from "@/utils/api";
 import { useNavigate } from "react-router-dom";
+
+function normalizeAssignedMatch(match) {
+  const request = match.request ?? {};
+  return {
+    matchId: match.id,
+    id: request.id ?? match.request_id,
+    tier: request.urgency_tier === "SOS" ? "sos" : "standard",
+    bloodGroup: request.blood_type_needed ?? null,
+    unitsNeeded: request.units_needed ?? 1,
+    unitsFulfilled: request.units_fulfilled ?? 0,
+    hospitalName: request.hospital_name ?? "Hospital",
+    ward: request.patient_ref ?? "Blood request",
+    patientCode: request.patient_ref ?? null,
+    status: "pending",
+    requestDate: match.notified_at ?? request.created_at ?? new Date().toISOString(),
+    urgencyNote: request.urgency_note ?? null,
+    location: request.location ?? null,
+    distanceKm: match.distance_km,
+  };
+}
+
 export default function DonorHomePage() {
   const {
     currentUser,
     isAuthenticated,
-    bloodRequests,
     donorAvailable,
     toggleDonorAvailable,
     incomingMatchAlert,
-    triggerMatchAlert,
     dismissMatchAlert,
     markAllNotificationsRead,
-    unreadCount,
   } = useApp();
 
   // Auth guard
@@ -40,6 +56,28 @@ export default function DonorHomePage() {
   }, [isAuthenticated, navigate]);
 
   const [toggling, setToggling] = useState(false);
+  const [assignedMatches, setAssignedMatches] = useState([]);
+  const [matchesError, setMatchesError] = useState(null);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let alive = true;
+    apiGetMatches()
+      .then(({ matches }) => {
+        if (!alive) return;
+        setAssignedMatches((matches ?? []).map(normalizeAssignedMatch));
+        setMatchesError(null);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        console.error("[DonorHome] Failed to load assigned matches:", error);
+        setAssignedMatches([]);
+        setMatchesError(error.message ?? "Failed to load matches");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isAuthenticated]);
 
   const handleToggle = async () => {
     setToggling(true);
@@ -50,7 +88,7 @@ export default function DonorHomePage() {
 
   const handleAcceptMatch = () => {
     if (typeof window !== "undefined") {
-      navigate(`/donor/match/${incomingMatchAlert?.matchId || MATCH_MOCK.matchId}`);
+      navigate(`/donor/match/${incomingMatchAlert.matchId}`);
     }
   };
 
@@ -61,7 +99,7 @@ export default function DonorHomePage() {
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  const activeRequests = bloodRequests.filter((r) => r.status !== "completed");
+  const activeRequests = assignedMatches;
 
   return (
     <>
@@ -375,37 +413,6 @@ export default function DonorHomePage() {
           </div>
         </div>
 
-        {/* ── SIMULATE MATCH ALERT BUTTON ──────────────────────────────── */}
-        <div style={{ margin: "12px 12px 0" }}>
-          <button
-            onClick={() => triggerMatchAlert(MATCH_MOCK)}
-            style={{
-              width: "100%",
-              height: "44px",
-              borderRadius: "10px",
-              backgroundColor: "#FFFFFF",
-              border: "1.5px dashed #C0392B",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            <Zap size={16} color="#C0392B" />
-            <span
-              style={{
-                fontSize: "13px",
-                fontWeight: "700",
-                color: "#C0392B",
-              }}
-            >
-              Simulate Incoming Match Alert
-            </span>
-          </button>
-        </div>
-
         {/* ── ACTIVE REQUESTS ────────────────────────────────────────── */}
         <section style={{ padding: "20px 12px 0" }}>
           <div
@@ -425,7 +432,7 @@ export default function DonorHomePage() {
                   margin: 0,
                 }}
               >
-                Active Requests Near You
+                Assigned Requests
               </h2>
               <p
                 style={{
@@ -434,7 +441,7 @@ export default function DonorHomePage() {
                   margin: "2px 0 0",
                 }}
               >
-                Owerri & surroundings
+                Real matches assigned to you
               </p>
             </div>
             <span
@@ -480,7 +487,7 @@ export default function DonorHomePage() {
                   textAlign: "center",
                 }}
               >
-                No active requests right now
+                {matchesError ? "Unable to load matches" : "No assigned requests right now"}
               </p>
               <p
                 style={{
@@ -491,8 +498,8 @@ export default function DonorHomePage() {
                   lineHeight: "1.5",
                 }}
               >
-                When a hospital or patient family posts a blood request matching
-                your group, it will appear here.
+                {matchesError ??
+                  "When the backend matching engine assigns you to a request, it will appear here."}
               </p>
             </div>
           ) : (
@@ -509,7 +516,7 @@ export default function DonorHomePage() {
                   request={req}
                   onClick={() => {
                     if (typeof window !== "undefined") {
-                      navigate(`/donor/match/match-${req.id}`);
+                      navigate(`/donor/match/${req.matchId}`);
                     }
                   }}
                 />
@@ -533,7 +540,7 @@ export default function DonorHomePage() {
           <div style={{ display: "flex", gap: "8px" }}>
             {[
               { label: "Donation History", icon: Clock, href: "#" },
-              { label: "Update Profile", icon: Award, href: "#" },
+              { label: "Update Profile", icon: Award, href: "/profile" },
             ].map(({ label, icon: Icon, href }) => (
               <a
                 key={label}
@@ -580,7 +587,8 @@ export default function DonorHomePage() {
       <BottomNavBar
         onNavigate={(key) => {
           if (typeof window === "undefined") return;
-          if (key === "home") router.push("/donor/home");
+          if (key === "home") navigate("/donor/home");
+          if (key === "profile") navigate("/profile");
         }}
       />
 

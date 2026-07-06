@@ -1,5 +1,12 @@
 "use client";
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import {
+  apiCreateRequest,
+  apiGetNotifications,
+  apiGetRequests,
+  apiUpdateNotifications,
+  apiUpdateRequestStatus,
+} from "@/utils/api";
 
 // ─── PERSONA DEFINITIONS ─────────────────────────────────────────────────────
 export const PERSONAS = {
@@ -14,7 +21,6 @@ export const PERSONAS = {
     lastDonated: "2025-02-14",
     totalDonations: 7,
     isAvailable: true,
-    notificationCount: 2,
   },
   patient_family: {
     id: "patient-fam-001",
@@ -25,7 +31,6 @@ export const PERSONAS = {
     location: "Owerri West, Imo State",
     patientName: "Mr. Vincent Eze",
     bloodGroupNeeded: "A-",
-    notificationCount: 3,
   },
   hospital_officer: {
     id: "hospital-001",
@@ -36,7 +41,6 @@ export const PERSONAS = {
     hospital: "Federal Medical Centre Owerri",
     department: "Blood Bank & Procurement",
     location: "Owerri Municipal, Imo State",
-    notificationCount: 5,
   },
 };
 
@@ -46,107 +50,17 @@ export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
 // ─── REQUEST STATUS ENUM ──────────────────────────────────────────────────────
 export const REQUEST_STATUS = {
   PENDING: "pending",
+  VERIFIED: "verified",
   DONOR_MATCHED: "donor_matched",
-  ARRIVED_AT_LAB: "arrived_at_lab",
-  COMPLETED: "completed",
+  CHECKED_IN: "checked_in",
+  FULFILLED: "fulfilled",
+  CANCELLED: "cancelled",
 };
-
-// ─── MOCK MATCH (used by incoming alert flow) ─────────────────────────────────
-export const MATCH_MOCK = {
-  matchId: "match-fmc-001",
-  requestId: "req-001",
-  bloodGroup: "O-",
-  hospitalName: "Federal Medical Centre Owerri",
-  ward: "Accident & Emergency",
-  location: "Orlu Road, Owerri, Imo State",
-  distanceKm: 4.2,
-  unitsNeeded: 3,
-  urgencyNote:
-    "Post-operative haemorrhage. Critical — patient is O-, universal donor needed.",
-  patientCode: "FMC-AE-2077",
-  tier: "sos",
-};
-
-// ─── INITIAL MOCK BLOOD REQUESTS ──────────────────────────────────────────────
-const INITIAL_REQUESTS = [
-  {
-    id: "req-001",
-    tier: "sos",
-    bloodGroup: "O-",
-    unitsNeeded: 3,
-    unitsFulfilled: 0,
-    hospitalName: "Federal Medical Centre Owerri",
-    ward: "Accident & Emergency",
-    patientCode: "FMC-AE-2077",
-    status: REQUEST_STATUS.PENDING,
-    requestedBy: "hospital_officer",
-    requestDate: "2025-05-22T18:45:00",
-    urgencyNote: "Post-operative haemorrhage. Critical.",
-    location: "Orlu Road, Owerri, Imo State",
-  },
-  {
-    id: "req-002",
-    tier: "standard",
-    bloodGroup: "A-",
-    unitsNeeded: 2,
-    unitsFulfilled: 1,
-    hospitalName: "St. David's Hospital",
-    ward: "Maternity & Obstetrics",
-    patientCode: "SDH-MAT-0339",
-    status: REQUEST_STATUS.DONOR_MATCHED,
-    requestedBy: "patient_family",
-    requestDate: "2025-05-22T11:10:00",
-    urgencyNote: "Post-partum anaemia. Stable but urgent.",
-    location: "Wetheral Road, Owerri, Imo State",
-  },
-  {
-    id: "req-003",
-    tier: "standard",
-    bloodGroup: "B+",
-    unitsNeeded: 1,
-    unitsFulfilled: 1,
-    hospitalName: "Holy Rosary Hospital",
-    ward: "Surgical Ward C",
-    patientCode: "HRH-SWC-1144",
-    status: REQUEST_STATUS.ARRIVED_AT_LAB,
-    requestedBy: "hospital_officer",
-    requestDate: "2025-05-21T09:30:00",
-    urgencyNote: "Pre-operative preparation.",
-    location: "Hospital Road, Emekuku, Imo State",
-  },
-];
-
-// ─── INITIAL NOTIFICATIONS ────────────────────────────────────────────────────
-const INITIAL_NOTIFICATIONS = [
-  {
-    id: "notif-001",
-    type: "sos_alert",
-    message: "SOS: O- blood urgently needed at FMC Owerri A&E.",
-    timestamp: "2025-05-22T18:50:00",
-    isRead: false,
-    requestId: "req-001",
-  },
-  {
-    id: "notif-002",
-    type: "match_found",
-    message: "A donor has been matched for your A- request at St. David's.",
-    timestamp: "2025-05-22T12:00:00",
-    isRead: false,
-    requestId: "req-002",
-  },
-  {
-    id: "notif-003",
-    type: "status_update",
-    message: "B+ donor arrived at Holy Rosary Lab. Verification in progress.",
-    timestamp: "2025-05-22T09:55:00",
-    isRead: true,
-    requestId: "req-003",
-  },
-];
 
 // ─── CONTEXT ──────────────────────────────────────────────────────────────────
 const AppContext = createContext(null);
 const AUTH_STORAGE_KEY = "lyfeblood.auth.user";
+const AUTH_TOKEN_STORAGE_KEY = "lyfeblood.auth.token";
 
 function canUseStorage() {
   try {
@@ -160,9 +74,11 @@ function getInitialUser() {
   if (!canUseStorage()) return null;
   try {
     const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
+    const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    return stored && token ? JSON.parse(stored) : null;
   } catch {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     return null;
   }
 }
@@ -192,10 +108,59 @@ function normalizeDbUser(u) {
     bloodGroup: u.blood_type ?? u.bloodGroup ?? null,
     location: u.location ?? null,
     isAvailable: u.availability_status === 1 || u.availability_status === true,
-    notificationCount: 0,
     email: u.email ?? null,
     phone: u.phone ?? null,
   };
+}
+
+function normalizeRequestStatus(status) {
+  switch (status) {
+    case "Pending":
+    case REQUEST_STATUS.PENDING:
+      return REQUEST_STATUS.PENDING;
+    case "Verified":
+    case REQUEST_STATUS.VERIFIED:
+      return REQUEST_STATUS.VERIFIED;
+    case "Donor Matched":
+    case REQUEST_STATUS.DONOR_MATCHED:
+      return REQUEST_STATUS.DONOR_MATCHED;
+    case "Arrived":
+    case "Arrived At Lab":
+    case REQUEST_STATUS.CHECKED_IN:
+      return REQUEST_STATUS.CHECKED_IN;
+    case "Completed":
+    case REQUEST_STATUS.FULFILLED:
+      return REQUEST_STATUS.FULFILLED;
+    case "Cancelled":
+    case REQUEST_STATUS.CANCELLED:
+      return REQUEST_STATUS.CANCELLED;
+    default:
+      return REQUEST_STATUS.PENDING;
+  }
+}
+
+function normalizeBloodRequest(r) {
+  return {
+    id: r.id,
+    tier: r.urgency_tier === "SOS" ? "sos" : "standard",
+    bloodGroup: r.blood_type_needed ?? r.bloodGroup ?? null,
+    unitsNeeded: r.units_needed ?? r.unitsNeeded ?? 1,
+    unitsFulfilled: r.units_fulfilled ?? r.unitsFulfilled ?? 0,
+    hospitalName: r.hospital_name ?? r.hospitalName ?? "Hospital",
+    ward: r.ward ?? r.patient_ref ?? r.patientCode ?? "Blood request",
+    patientCode: r.patient_ref ?? r.patientCode ?? null,
+    status: normalizeRequestStatus(r.status),
+    requestedBy: r.requested_by ?? r.requestedBy ?? null,
+    requestDate: r.created_at ?? r.requestDate ?? new Date().toISOString(),
+    urgencyNote: r.urgency_note ?? r.urgencyNote ?? null,
+    location: r.location ?? null,
+  };
+}
+
+function normalizeRole(role) {
+  if (role === "patient_family") return "requester";
+  if (role === "hospital_officer") return "hospital";
+  return role;
 }
 
 export function AppProvider({ children }) {
@@ -204,24 +169,75 @@ export function AppProvider({ children }) {
 const [isAuthenticated, setIsAuthenticated] = useState(() => {
   return !!getInitialUser();
 });
-  const [bloodRequests, setBloodRequests] = useState(INITIAL_REQUESTS);
-  const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
+  const [bloodRequests, setBloodRequests] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [activeNav, setActiveNav] = useState("home");
   const [donorAvailable, setDonorAvailable] = useState(true);
   const [incomingMatchAlert, setIncomingMatchAlert] = useState(null);
 
+  const refreshBloodRequests = useCallback(async () => {
+    const { requests } = await apiGetRequests();
+    setBloodRequests((requests ?? []).map(normalizeBloodRequest));
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!getInitialUser()) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+    const { notifications: rows, unread_count } = await apiGetNotifications();
+    setNotifications(
+      (rows ?? []).map((notification) => ({
+        ...notification,
+        isRead: Boolean(notification.read_at),
+        requestId: notification.request_id,
+        matchId: notification.match_id,
+        timestamp: notification.created_at,
+      })),
+    );
+    setUnreadCount(unread_count ?? 0);
+  }, []);
+
+  useEffect(() => {
+    refreshBloodRequests().catch((error) => {
+      console.error("[AppContext] Failed to load blood requests:", error);
+      setBloodRequests([]);
+    });
+  }, [refreshBloodRequests]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    refreshNotifications().catch((error) => {
+      console.error("[AppContext] Failed to load notifications:", error);
+      setNotifications([]);
+      setUnreadCount(0);
+    });
+  }, [isAuthenticated, refreshNotifications]);
+
   const login = useCallback((personaKeyOrUser) => {
     // Accept a real DB user object (from /api/auth/login response)
     if (personaKeyOrUser && typeof personaKeyOrUser === "object") {
-      const user = normalizeDbUser(personaKeyOrUser);
+      const authUser = personaKeyOrUser.user ?? personaKeyOrUser;
+      const token = personaKeyOrUser.token ?? null;
+      const user = normalizeDbUser(authUser);
       setCurrentUser(user);
       setIsAuthenticated(true);
       setBloodRequests([]); 
-      setNotifications([]); 
+      setNotifications([]);
+      setUnreadCount(0);
       setDonorAvailable(user.isAvailable);
       if (canUseStorage()) {
         window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+        if (token) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
       }
+      refreshBloodRequests().catch((error) => {
+        console.error("[AppContext] Failed to refresh blood requests after login:", error);
+      });
+      refreshNotifications().catch((error) => {
+        console.error("[AppContext] Failed to refresh notifications after login:", error);
+      });
       return;
     }
     // Legacy: accept a persona key string (keeps existing mock flows working)
@@ -231,19 +247,39 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     setIsAuthenticated(true);
     setBloodRequests([]);
     setNotifications([]);
+    setUnreadCount(0);
     setDonorAvailable(persona.isAvailable ?? true);
     if (canUseStorage()) {
       window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(persona));
+      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     }
-  }, []);
+    refreshBloodRequests().catch((error) => {
+      console.error("[AppContext] Failed to refresh blood requests after login:", error);
+    });
+    refreshNotifications().catch((error) => {
+      console.error("[AppContext] Failed to refresh notifications after login:", error);
+    });
+  }, [refreshBloodRequests, refreshNotifications]);
 
   const logout = useCallback(() => {
     setCurrentUser(null);
     setIsAuthenticated(false);
     setActiveNav("home");
     setIncomingMatchAlert(null);
+    setNotifications([]);
+    setUnreadCount(0);
     if (canUseStorage()) {
       window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    }
+  }, []);
+
+  const updateCurrentUser = useCallback((nextUser) => {
+    const normalized = normalizeDbUser(nextUser);
+    setCurrentUser(normalized);
+    setDonorAvailable(normalized.isAvailable);
+    if (canUseStorage()) {
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalized));
     }
   }, []);
 
@@ -252,39 +288,81 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
   }, []);
 
   const triggerMatchAlert = useCallback((matchData) => {
-    setIncomingMatchAlert(matchData ?? MATCH_MOCK);
+    if (matchData) setIncomingMatchAlert(matchData);
   }, []);
 
   const dismissMatchAlert = useCallback(() => {
     setIncomingMatchAlert(null);
   }, []);
 
-  const updateRequestStatus = useCallback((requestId, newStatus) => {
+  const updateRequestStatus = useCallback(async (requestId, newStatus, options = {}) => {
+    const statusByUiStatus = {
+      [REQUEST_STATUS.PENDING]: "pending",
+      [REQUEST_STATUS.VERIFIED]: "verified",
+      [REQUEST_STATUS.DONOR_MATCHED]: "donor_matched",
+      [REQUEST_STATUS.CHECKED_IN]: "checked_in",
+      [REQUEST_STATUS.FULFILLED]: "fulfilled",
+      [REQUEST_STATUS.CANCELLED]: "cancelled",
+    };
+    if (options.persist !== false) {
+      await apiUpdateRequestStatus({
+        request_id: requestId,
+        status: statusByUiStatus[newStatus] ?? newStatus,
+      });
+      refreshNotifications().catch((error) => {
+        console.error("[AppContext] Failed to refresh notifications after status update:", error);
+      });
+    }
     setBloodRequests((prev) =>
       prev.map((req) =>
         req.id === requestId ? { ...req, status: newStatus } : req,
       ),
     );
+  }, [refreshNotifications]);
+
+  const addRequest = useCallback(async (newRequest) => {
+    const { request } = await apiCreateRequest({
+      hospital_name: newRequest.hospitalName,
+      blood_type_needed: newRequest.bloodGroup,
+      urgency_tier: newRequest.tier === "sos" ? "SOS" : "Standard",
+      units_needed: newRequest.unitsNeeded,
+      patient_ref: newRequest.patientCode ?? newRequest.ward ?? null,
+      location: newRequest.location ?? null,
+      urgency_note: newRequest.urgencyNote ?? null,
+      requested_by: newRequest.requestedBy ?? null,
+    });
+    setBloodRequests((prev) => [normalizeBloodRequest(request), ...prev]);
+    refreshNotifications().catch((error) => {
+      console.error("[AppContext] Failed to refresh notifications after request create:", error);
+    });
+  }, [refreshNotifications]);
+
+  const markAllNotificationsRead = useCallback(async () => {
+    await apiUpdateNotifications({ read: true });
+    setNotifications((prev) => prev.map((notification) => ({
+      ...notification,
+      isRead: true,
+      read_at: notification.read_at ?? new Date().toISOString(),
+    })));
+    setUnreadCount(0);
   }, []);
 
-  const addRequest = useCallback((newRequest) => {
-    const id = `req-${Date.now()}`;
-    setBloodRequests((prev) => [
-      { ...newRequest, id, requestDate: new Date().toISOString() },
-      ...prev,
-    ]);
-  }, []);
-
-  const markAllNotificationsRead = useCallback(() => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  }, []);
-
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
+  const markNotificationsUnread = useCallback(async (ids) => {
+    await apiUpdateNotifications({ ids, read: false });
+    setNotifications((prev) => prev.map((notification) => {
+      if (ids?.length && !ids.includes(notification.id)) return notification;
+      return { ...notification, isRead: false, read_at: null };
+    }));
+    refreshNotifications().catch((error) => {
+      console.error("[AppContext] Failed to refresh notifications after unread update:", error);
+    });
+  }, [refreshNotifications]);
 
   return (
     <AppContext.Provider
       value={{
         currentUser,
+        updateCurrentUser,
         isAuthenticated,
         login,
         logout,
@@ -294,6 +372,8 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
         notifications,
         unreadCount,
         markAllNotificationsRead,
+        markNotificationsUnread,
+        refreshNotifications,
         activeNav,
         setActiveNav,
         donorAvailable,

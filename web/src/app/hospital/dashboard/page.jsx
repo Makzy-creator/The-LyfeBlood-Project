@@ -1,17 +1,17 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   Plus,
   X,
   ClipboardList,
-  Zap,
   Clock,
   Droplets,
   CheckCircle2,
   Building2,
   Radio,
-  ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import TopAppBar from "@/components/ui/TopAppBar";
 import BottomNavBar from "@/components/ui/BottomNavBar";
@@ -21,6 +21,7 @@ import RequestStatusBadge from "@/components/ui/RequestStatusBadge";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from "@/context/AppContext";
+import { apiGetMatches, apiVerifyToken } from "@/utils/api";
 
 // ─── NEW REQUEST MODAL SHEET ──────────────────────────────────────────────────
 function NewRequestSheet({ onClose, onSubmit, isSOS }) {
@@ -338,6 +339,7 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
 
 // ─── MAIN HOSPITAL DASHBOARD ──────────────────────────────────────────────────
 export default function HospitalDashboardPage() {
+  const navigate = useNavigate();
   const {
     currentUser,
     isAuthenticated,
@@ -349,11 +351,20 @@ export default function HospitalDashboardPage() {
 
   const [showSheet, setShowSheet] = useState(false);
   const [sheetIsSOS, setSheetIsSOS] = useState(false);
-  const [demoCycleActive, setDemoCycleActive] = useState(false);
-  const [demoCycleCountdown, setDemoCycleCountdown] = useState(null);
   const [sosPressed, setSosPressed] = useState(false);
-  const demoIntervalRef = useRef(null);
-  const demoCountRef = useRef(null);
+  const [acceptedMatches, setAcceptedMatches] = useState([]);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [checkInMatchId, setCheckInMatchId] = useState("");
+  const [checkInOtp, setCheckInOtp] = useState("");
+  const [checkInLoading, setCheckInLoading] = useState(false);
+  const [checkInError, setCheckInError] = useState(null);
+  const [checkInSuccess, setCheckInSuccess] = useState(null);
+  const [statusAction, setStatusAction] = useState({
+    id: null,
+    loading: false,
+    error: null,
+    success: null,
+  });
 
   useEffect(() => {
     if (typeof window !== "undefined" && !isAuthenticated) {
@@ -361,44 +372,29 @@ export default function HospitalDashboardPage() {
     }
   }, [isAuthenticated]);
 
-  // ── 15-second demo simulation cycle ────────────────────────────────────────
-  const startDemoCycle = useCallback(() => {
-    if (demoCycleActive) return;
-    setDemoCycleActive(true);
-    setDemoCycleCountdown(15);
-
-    demoCountRef.current = setInterval(() => {
-      setDemoCycleCountdown((c) => {
-        if (c <= 1) {
-          clearInterval(demoCountRef.current);
-          return 0;
-        }
-        return c - 1;
-      });
-    }, 1000);
-
-    demoIntervalRef.current = setTimeout(() => {
-      // Auto-transition first pending request → donor_matched
-      const pendingReq = bloodRequests.find(
-        (r) => r.status === REQUEST_STATUS.PENDING,
+  const loadAcceptedMatches = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setMatchesLoading(true);
+    try {
+      const { matches } = await apiGetMatches();
+      const accepted = (matches ?? []).filter(
+        (match) => match.match_status === "Accepted",
       );
-      if (pendingReq)
-        updateRequestStatus(pendingReq.id, REQUEST_STATUS.DONOR_MATCHED);
-      clearInterval(demoCountRef.current);
-      setDemoCycleActive(false);
-      setDemoCycleCountdown(null);
-    }, 15000);
-  }, [demoCycleActive, bloodRequests, updateRequestStatus]);
+      setAcceptedMatches(accepted);
+      setCheckInMatchId((current) => current || accepted[0]?.id || "");
+    } catch (error) {
+      setCheckInError(error?.message ?? "Unable to load accepted matches");
+    } finally {
+      setMatchesLoading(false);
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
-    return () => {
-      clearTimeout(demoIntervalRef.current);
-      clearInterval(demoCountRef.current);
-    };
-  }, []);
+    loadAcceptedMatches();
+  }, [loadAcceptedMatches]);
 
-  const handleNewRequest = (formData) => {
-    addRequest({
+  const handleNewRequest = async (formData) => {
+    await addRequest({
       tier: formData.isSOS ? "sos" : "standard",
       bloodGroup: formData.bloodGroup,
       unitsNeeded: formData.unitsNeeded,
@@ -415,10 +411,63 @@ export default function HospitalDashboardPage() {
     setShowSheet(false);
   };
 
+  const handleVerifyCheckIn = async () => {
+    setCheckInError(null);
+    setCheckInSuccess(null);
+
+    if (!checkInMatchId) {
+      setCheckInError("Select the donor match before verifying check-in.");
+      return;
+    }
+    if (!/^\d{6}$/.test(checkInOtp.trim())) {
+      setCheckInError("Enter the donor's 6-digit OTP.");
+      return;
+    }
+
+    setCheckInLoading(true);
+    try {
+      const response = await apiVerifyToken({
+        match_id: checkInMatchId,
+        otp: checkInOtp.trim(),
+      });
+      updateRequestStatus(response.request_id, REQUEST_STATUS.CHECKED_IN, {
+        persist: false,
+      });
+      setCheckInSuccess(response.message ?? "Check-in verified.");
+      setCheckInOtp("");
+      await loadAcceptedMatches();
+    } catch (error) {
+      setCheckInError(error?.message ?? "Unable to verify check-in");
+    } finally {
+      setCheckInLoading(false);
+    }
+  };
+
+  const handleStatusUpdate = async (requestId, nextStatus) => {
+    setStatusAction({ id: requestId, loading: true, error: null, success: null });
+    try {
+      await updateRequestStatus(requestId, nextStatus);
+      setStatusAction({
+        id: requestId,
+        loading: false,
+        error: null,
+        success: `Status updated to ${nextStatus.replaceAll("_", " ")}.`,
+      });
+    } catch (error) {
+      setStatusAction({
+        id: requestId,
+        loading: false,
+        error: error?.message ?? "Unable to update request status.",
+        success: null,
+      });
+    }
+  };
+
   if (!currentUser) return null;
 
   const activeRequests = bloodRequests.filter(
-    (r) => r.status !== REQUEST_STATUS.COMPLETED,
+    (r) =>
+      ![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(r.status),
   );
   const pendingCount = bloodRequests.filter(
     (r) => r.status === REQUEST_STATUS.PENDING,
@@ -426,6 +475,9 @@ export default function HospitalDashboardPage() {
   const matchedCount = bloodRequests.filter(
     (r) => r.status === REQUEST_STATUS.DONOR_MATCHED,
   ).length;
+  const selectedMatch = acceptedMatches.find(
+    (match) => String(match.id) === String(checkInMatchId),
+  );
 
   return (
     <>
@@ -441,42 +493,6 @@ export default function HospitalDashboardPage() {
           title="Blood Bank Command"
           onBellPress={markAllNotificationsRead}
         />
-
-        {/* ── DEMO CYCLE BANNER ──────────────────────────────────────── */}
-        {demoCycleActive && (
-          <div
-            style={{
-              backgroundColor: "#DBEAFE",
-              padding: "12px 16px",
-              borderBottom: "1px solid #BFDBFE",
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-            }}
-          >
-            <div
-              style={{
-                width: "7px",
-                height: "7px",
-                borderRadius: "50%",
-                backgroundColor: "#1E40AF",
-                animation: "pulseDot 1s infinite",
-                flexShrink: 0,
-              }}
-            />
-            <span
-              style={{
-                flex: 1,
-                fontSize: "13px",
-                fontWeight: "600",
-                color: "#1E40AF",
-              }}
-            >
-              Demo cycle running — auto-matching pending request in{" "}
-              {demoCycleCountdown}s…
-            </span>
-          </div>
-        )}
 
         {/* ── OFFICER PROFILE CARD ───────────────────────────────────── */}
         <div
@@ -683,36 +699,212 @@ export default function HospitalDashboardPage() {
               </span>
             </button>
 
-            <button
-              onClick={startDemoCycle}
-              disabled={demoCycleActive}
+          </div>
+        </div>
+
+        {/* ── CHECK-IN VERIFICATION ─────────────────────────────────── */}
+        <section style={{ padding: "16px 12px 0" }}>
+          <div
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: "8px",
+              padding: "16px",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+            }}
+          >
+            <div
               style={{
-                flex: 1,
-                height: "46px",
-                backgroundColor: demoCycleActive ? "#F4F4F4" : "#FFFFFF",
-                border: `1.5px solid ${demoCycleActive ? "#C8C8C8" : "#1A1A1A"}`,
-                borderRadius: "8px",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                gap: "6px",
-                cursor: demoCycleActive ? "not-allowed" : "pointer",
+                justifyContent: "space-between",
+                gap: "10px",
+              }}
+            >
+              <div>
+                <h2
+                  style={{
+                    fontSize: "15px",
+                    fontWeight: "800",
+                    color: "#1A1A1A",
+                    margin: "0 0 2px",
+                  }}
+                >
+                  Donor Check-In
+                </h2>
+                <p style={{ fontSize: "12px", color: "#6B6B6B", margin: 0 }}>
+                  Verify the donor identity and OTP before marking arrival.
+                </p>
+              </div>
+              <button
+                onClick={loadAcceptedMatches}
+                disabled={matchesLoading}
+                aria-label="Refresh accepted matches"
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "8px",
+                  border: "1px solid #C8C8C8",
+                  backgroundColor: "#FFFFFF",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: matchesLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                <RefreshCw
+                  size={16}
+                  color="#1A1A1A"
+                  style={{
+                    animation: matchesLoading ? "spin 1s linear infinite" : "none",
+                  }}
+                />
+              </button>
+            </div>
+
+            <select
+              value={checkInMatchId}
+              onChange={(event) => {
+                setCheckInMatchId(event.target.value);
+                setCheckInError(null);
+                setCheckInSuccess(null);
+              }}
+              disabled={matchesLoading || checkInLoading || acceptedMatches.length === 0}
+              style={{
+                width: "100%",
+                height: "44px",
+                borderRadius: "8px",
+                border: "1.5px solid #C8C8C8",
+                paddingInline: "12px",
+                fontSize: "13px",
+                color: "#1A1A1A",
+                backgroundColor: "#FFFFFF",
                 fontFamily: "inherit",
               }}
             >
-              <Zap size={15} color={demoCycleActive ? "#C8C8C8" : "#1A1A1A"} />
-              <span
+              <option value="">
+                {matchesLoading ? "Loading accepted matches..." : "Select accepted donor match"}
+              </option>
+              {acceptedMatches.map((match) => (
+                <option key={match.id} value={match.id}>
+                  {match.donor?.full_name ?? "Assigned donor"} ·{" "}
+                  {match.request?.blood_type_needed ?? "Blood"} · {match.id}
+                </option>
+              ))}
+            </select>
+
+            {selectedMatch && (
+              <div
                 style={{
-                  fontSize: "13px",
-                  fontWeight: "700",
-                  color: demoCycleActive ? "#C8C8C8" : "#1A1A1A",
+                  backgroundColor: "#F4F4F4",
+                  borderRadius: "8px",
+                  padding: "10px 12px",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
                 }}
               >
-                {demoCycleActive ? `${demoCycleCountdown}s…` : "Demo Cycle"}
-              </span>
-            </button>
+                {[
+                  ["Donor", selectedMatch.donor?.full_name],
+                  ["Phone", selectedMatch.donor?.phone],
+                  ["Blood", selectedMatch.donor?.blood_type],
+                  ["Request", selectedMatch.request?.patient_ref],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <p
+                      style={{
+                        fontSize: "10px",
+                        fontWeight: "700",
+                        color: "#6B6B6B",
+                        margin: "0 0 2px",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {label}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: "700",
+                        color: "#1A1A1A",
+                        margin: 0,
+                      }}
+                    >
+                      {value || "Not provided"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <input
+              value={checkInOtp}
+              onChange={(event) => {
+                setCheckInOtp(event.target.value.replace(/\D/g, "").slice(0, 6));
+                setCheckInError(null);
+                setCheckInSuccess(null);
+              }}
+              inputMode="numeric"
+              placeholder="Enter 6-digit OTP"
+              disabled={checkInLoading || !checkInMatchId}
+              style={{
+                width: "100%",
+                height: "46px",
+                borderRadius: "8px",
+                border: "1.5px solid #C8C8C8",
+                paddingInline: "12px",
+                fontSize: "18px",
+                fontWeight: "800",
+                letterSpacing: "4px",
+                color: "#1A1A1A",
+                backgroundColor: "#FFFFFF",
+                fontFamily: "inherit",
+                boxSizing: "border-box",
+              }}
+            />
+
+            {checkInError && (
+              <p
+                style={{
+                  margin: 0,
+                  borderRadius: "8px",
+                  backgroundColor: "#FADBD8",
+                  color: "#922B21",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  padding: "10px 12px",
+                }}
+              >
+                {checkInError}
+              </p>
+            )}
+            {checkInSuccess && (
+              <p
+                style={{
+                  margin: 0,
+                  borderRadius: "8px",
+                  backgroundColor: "#D5F5E3",
+                  color: "#1E8449",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  padding: "10px 12px",
+                }}
+              >
+                {checkInSuccess}
+              </p>
+            )}
+
+            <PrimaryButton
+              onClick={handleVerifyCheckIn}
+              disabled={checkInLoading || !checkInMatchId || checkInOtp.length !== 6}
+              icon={checkInLoading ? RefreshCw : CheckCircle2}
+            >
+              {checkInLoading ? "Verifying..." : "Verify Check-In"}
+            </PrimaryButton>
           </div>
-        </div>
+        </section>
 
         {/* ── STATUS PIPELINE ────────────────────────────────────────── */}
         <section style={{ padding: "20px 12px 0" }}>
@@ -736,9 +928,11 @@ export default function HospitalDashboardPage() {
           >
             {[
               { status: REQUEST_STATUS.PENDING, label: "Pending" },
+              { status: REQUEST_STATUS.VERIFIED, label: "Verified" },
               { status: REQUEST_STATUS.DONOR_MATCHED, label: "Matched" },
-              { status: REQUEST_STATUS.ARRIVED_AT_LAB, label: "At Lab" },
-              { status: REQUEST_STATUS.COMPLETED, label: "Complete" },
+              { status: REQUEST_STATUS.CHECKED_IN, label: "Checked In" },
+              { status: REQUEST_STATUS.FULFILLED, label: "Fulfilled" },
+              { status: REQUEST_STATUS.CANCELLED, label: "Cancelled" },
             ].map(({ status, label }) => {
               const count = bloodRequests.filter(
                 (r) => r.status === status,
@@ -859,9 +1053,12 @@ export default function HospitalDashboardPage() {
             >
               {activeRequests.map((req) => (
                 <div key={req.id}>
-                  <RequestCard request={req} />
+                  <RequestCard
+                    request={req}
+                    onClick={() => navigate(`/requests/${req.id}`)}
+                  />
                   {/* Quick status advance controls */}
-                  {req.status !== REQUEST_STATUS.COMPLETED && (
+                  {![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(req.status) && (
                     <div
                       style={{
                         backgroundColor: "#FAFAFA",
@@ -885,42 +1082,74 @@ export default function HospitalDashboardPage() {
                       </span>
                       {[
                         {
-                          label: "→ Matched",
-                          next: REQUEST_STATUS.DONOR_MATCHED,
+                          label: "Verify",
+                          next: REQUEST_STATUS.VERIFIED,
                           from: REQUEST_STATUS.PENDING,
                         },
                         {
-                          label: "→ At Lab",
-                          next: REQUEST_STATUS.ARRIVED_AT_LAB,
-                          from: REQUEST_STATUS.DONOR_MATCHED,
+                          label: "Matched",
+                          next: REQUEST_STATUS.DONOR_MATCHED,
+                          from: REQUEST_STATUS.VERIFIED,
                         },
                         {
-                          label: "→ Complete",
-                          next: REQUEST_STATUS.COMPLETED,
-                          from: REQUEST_STATUS.ARRIVED_AT_LAB,
+                          label: "Fulfill",
+                          next: REQUEST_STATUS.FULFILLED,
+                          from: REQUEST_STATUS.CHECKED_IN,
+                        },
+                        {
+                          label: "Cancel",
+                          next: REQUEST_STATUS.CANCELLED,
+                          from: req.status,
                         },
                       ]
                         .filter((a) => a.from === req.status)
                         .map(({ label, next }) => (
                           <button
                             key={next}
-                            onClick={() => updateRequestStatus(req.id, next)}
+                            onClick={() => handleStatusUpdate(req.id, next)}
+                            disabled={statusAction.loading && statusAction.id === req.id}
                             style={{
                               fontSize: "11px",
                               fontWeight: "700",
-                              color: "#C0392B",
-                              backgroundColor: "#FADBD8",
+                              color:
+                                statusAction.loading && statusAction.id === req.id
+                                  ? "#6B6B6B"
+                                  : "#C0392B",
+                              backgroundColor:
+                                statusAction.loading && statusAction.id === req.id
+                                  ? "#F4F4F4"
+                                  : "#FADBD8",
                               border: "none",
                               borderRadius: "6px",
                               padding: "4px 10px",
-                              cursor: "pointer",
+                              cursor:
+                                statusAction.loading && statusAction.id === req.id
+                                  ? "not-allowed"
+                                  : "pointer",
                               fontFamily: "inherit",
                             }}
                           >
-                            {label}
+                            {statusAction.loading && statusAction.id === req.id
+                              ? "Saving..."
+                              : label}
                           </button>
                         ))}
                     </div>
+                  )}
+                  {statusAction.id === req.id && (statusAction.error || statusAction.success) && (
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        borderRadius: "8px",
+                        backgroundColor: statusAction.error ? "#FADBD8" : "#D5F5E3",
+                        color: statusAction.error ? "#922B21" : "#1E8449",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                        padding: "8px 10px",
+                      }}
+                    >
+                      {statusAction.error ?? statusAction.success}
+                    </p>
                   )}
                 </div>
               ))}
@@ -928,8 +1157,8 @@ export default function HospitalDashboardPage() {
           )}
         </section>
 
-        {/* ── COMPLETED REQUESTS ─────────────────────────────────────── */}
-        {bloodRequests.filter((r) => r.status === REQUEST_STATUS.COMPLETED)
+        {/* ── FULFILLED REQUESTS ─────────────────────────────────────── */}
+        {bloodRequests.filter((r) => r.status === REQUEST_STATUS.FULFILLED)
           .length > 0 && (
           <section style={{ padding: "20px 12px" }}>
             <h2
@@ -940,7 +1169,7 @@ export default function HospitalDashboardPage() {
                 margin: "0 0 10px",
               }}
             >
-              Completed
+              Fulfilled
             </h2>
             <div
               style={{
@@ -951,9 +1180,13 @@ export default function HospitalDashboardPage() {
               }}
             >
               {bloodRequests
-                .filter((r) => r.status === REQUEST_STATUS.COMPLETED)
+                .filter((r) => r.status === REQUEST_STATUS.FULFILLED)
                 .map((req) => (
-                  <RequestCard key={req.id} request={req} />
+                  <RequestCard
+                    key={req.id}
+                    request={req}
+                    onClick={() => navigate(`/requests/${req.id}`)}
+                  />
                 ))}
             </div>
           </section>
@@ -964,7 +1197,8 @@ export default function HospitalDashboardPage() {
       <BottomNavBar
         onNavigate={(key) => {
           if (typeof window === "undefined") return;
-          if (key === "home") window.location.href = "/hospital/dashboard";
+          if (key === "home") navigate("/hospital/dashboard");
+          if (key === "profile") navigate("/profile");
         }}
       />
 
@@ -985,6 +1219,10 @@ export default function HospitalDashboardPage() {
         @keyframes pulseDot {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.4; transform: scale(0.75); }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
         * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
         body { margin: 0; padding: 0; }

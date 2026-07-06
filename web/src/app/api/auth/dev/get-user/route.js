@@ -1,6 +1,10 @@
 import { getBypassUser } from "../../bypass-store";
+import { requireAuth } from "@/app/api/utils/auth";
 
 export async function GET(request) {
+  const auth = requireAuth(request, ["admin"]);
+  if (auth.error) return auth.error;
+
   if (process.env.BYPASS_REGISTER_DB !== "true")
     return Response.json({ error: "Not allowed" }, { status: 403 });
 

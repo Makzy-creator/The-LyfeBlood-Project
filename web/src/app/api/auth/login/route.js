@@ -4,6 +4,12 @@
  * Returns: { user, message }
  */
 import { getBypassUser } from "../bypass-store";
+import {
+  createSessionToken,
+  hashPassword,
+  verifyLegacyBase64Password,
+  verifyPassword,
+} from "@/app/api/utils/auth";
 import { createSupabaseServerClient, normalizeEmail } from "@/app/api/utils/supabase";
 
 export async function POST(request) {
@@ -42,14 +48,28 @@ export async function POST(request) {
     }
 
     const storedPassword = row.password_hash;
-    const providedPassword = Buffer.from(password).toString("base64");
+    const isHashedPassword = verifyPassword(password, storedPassword);
+    const isLegacyPassword = verifyLegacyBase64Password(password, storedPassword);
 
-    if (storedPassword !== providedPassword) {
+    if (!isHashedPassword && !isLegacyPassword) {
       return Response.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
     const { password_hash, ...user } = row;
-    return Response.json({ user, message: "Login successful" });
+
+    if (isLegacyPassword) {
+      const { error: upgradeError } = await supabase
+        .from("users")
+        .update({ password_hash: hashPassword(password) })
+        .eq("id", user.id);
+
+      if (upgradeError) {
+        throw upgradeError;
+      }
+    }
+
+    const token = createSessionToken(user);
+    return Response.json({ user, token, message: "Login successful" });
   } catch (err) {
     console.error("[POST /api/auth/login]", err);
     return Response.json({ error: "Login failed" }, { status: 500 });

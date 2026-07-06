@@ -1,21 +1,14 @@
 /**
  * POST /api/matches/respond
  * Body: { match_id: string, decision: 'Accepted' | 'Declined' }
- *
- * Accepted path (atomic transaction):
- *   1. UPDATE matches.match_status → 'Accepted'
- *   2. UPDATE blood_requests.status → 'Donor Matched'
- *   3. INSERT verification_token with crypto-random 6-digit OTP + 15-min expiry
- *
- * Returns OTP + expiry on Accepted so the donor UI can render the check-in screen.
  */
-import sql from "@/app/api/utils/sql";
-import { randomInt } from "crypto";
-
-/** Cryptographically secure 6-digit OTP — no Math.random() bias. */
-function generateOTP() {
-  return String(randomInt(100000, 1000000)); // inclusive [100000, 999999]
-}
+import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import { requireAuth } from "@/app/api/utils/auth";
+import { generateOtp, getOtpTtlMinutes, getOtpTtlSeconds, hashOtp } from "@/app/api/utils/otp";
+import {
+  createNotifications,
+  requestRecipientIds,
+} from "@/app/api/utils/notifications";
 
 function minutesFromNow(n) {
   return new Date(Date.now() + n * 60_000).toISOString();
@@ -23,36 +16,80 @@ function minutesFromNow(n) {
 
 export async function POST(request) {
   try {
+    const auth = requireAuth(request, ["donor"]);
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const { match_id, decision } = body;
 
-    if (!match_id)
+    if (!match_id) {
       return Response.json({ error: "match_id is required" }, { status: 400 });
-    if (!["Accepted", "Declined"].includes(decision))
+    }
+    if (!["Accepted", "Declined"].includes(decision)) {
       return Response.json(
         { error: "decision must be Accepted or Declined" },
         { status: 400 },
       );
+    }
 
-    // ── Load the match row ────────────────────────────────────────────────────
-    const rows = await sql`
-      SELECT * FROM matches WHERE id = ${match_id} LIMIT 1
-    `;
-    if (rows.length === 0)
+    const supabase = createSupabaseServerClient();
+    const { data: match, error: matchError } = await supabase
+      .from("matches")
+      .select("*")
+      .eq("id", match_id)
+      .eq("donor_id", auth.user.sub)
+      .maybeSingle();
+
+    if (matchError) throw matchError;
+    if (!match) {
       return Response.json({ error: "Match not found" }, { status: 404 });
-
-    const match = rows[0];
-    if (match.match_status !== "Alerted")
+    }
+    if (match.match_status !== "Alerted") {
       return Response.json(
         { error: "Match already responded to" },
         { status: 409 },
       );
+    }
 
-    // ── Declined path ─────────────────────────────────────────────────────────
     if (decision === "Declined") {
-      await sql`
-        UPDATE matches SET match_status = 'Declined' WHERE id = ${match_id}
-      `;
+      const { error } = await supabase
+        .from("matches")
+        .update({
+          match_status: "Declined",
+          responded_at: new Date().toISOString(),
+        })
+        .eq("id", match_id)
+        .eq("donor_id", auth.user.sub);
+
+      if (error) throw error;
+
+      const { data: bloodRequest, error: requestError } = await supabase
+        .from("blood_requests")
+        .select("id, hospital_name, blood_type_needed, requested_by, hospital_id")
+        .eq("id", match.request_id)
+        .single();
+
+      if (requestError) throw requestError;
+
+      await createNotifications(supabase, [
+        {
+          user_id: auth.user.sub,
+          type: "match_declined",
+          title: "Match declined",
+          message: `You declined the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
+          request_id: bloodRequest.id,
+          match_id,
+        },
+        ...requestRecipientIds(bloodRequest).map((userId) => ({
+          user_id: userId,
+          type: "match_declined",
+          title: "Donor declined",
+          message: `A donor declined the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
+          request_id: bloodRequest.id,
+          match_id,
+        })),
+      ]);
+
       return Response.json({
         message: "Match declined",
         match_id,
@@ -60,36 +97,78 @@ export async function POST(request) {
       });
     }
 
-    // ── Accepted path — three writes in a single transaction ─────────────────
-    const otp = generateOTP();
-    const expiresAt = minutesFromNow(15);
+    const otp = generateOtp();
+    const expiresAt = minutesFromNow(getOtpTtlMinutes());
 
-    const [token, updatedMatch, updatedRequest] = await sql.transaction([
-      sql`
-        UPDATE matches SET match_status = 'Accepted'
-        WHERE id = ${match_id}
-        RETURNING id, match_status
-      `,
-      sql`
-        UPDATE blood_requests SET status = 'Donor Matched'
-        WHERE id = ${match.request_id}
-        RETURNING id, status
-      `,
-      sql`
-        INSERT INTO verification_tokens (match_id, secure_otp, expires_at, status)
-        VALUES (${match_id}, ${otp}, ${expiresAt}, 'Active')
-        RETURNING id, match_id, secure_otp, expires_at, status
-      `,
+    const { error: updateMatchError } = await supabase
+      .from("matches")
+      .update({
+        match_status: "Accepted",
+        responded_at: new Date().toISOString(),
+      })
+      .eq("id", match_id)
+      .eq("donor_id", auth.user.sub);
+
+    if (updateMatchError) throw updateMatchError;
+
+    const { data: updatedRequest, error: updateRequestError } = await supabase
+      .from("blood_requests")
+      .update({ status: "donor_matched" })
+      .eq("id", match.request_id)
+      .select("id, status")
+      .single();
+
+    if (updateRequestError) throw updateRequestError;
+
+    const { data: token, error: tokenError } = await supabase
+      .from("verification_tokens")
+      .insert({
+        match_id,
+        secure_otp: hashOtp(otp),
+        expires_at: expiresAt,
+        status: "Active",
+      })
+      .select("id, match_id, expires_at, status")
+      .single();
+
+    if (tokenError) throw tokenError;
+
+    const { data: bloodRequest, error: requestLookupError } = await supabase
+      .from("blood_requests")
+      .select("id, hospital_name, blood_type_needed, requested_by, hospital_id")
+      .eq("id", match.request_id)
+      .single();
+
+    if (requestLookupError) throw requestLookupError;
+
+    await createNotifications(supabase, [
+      {
+        user_id: auth.user.sub,
+        type: "match_accepted",
+        title: "Match accepted",
+        message: `You accepted the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
+        request_id: bloodRequest.id,
+        match_id,
+      },
+      ...requestRecipientIds(bloodRequest).map((userId) => ({
+        user_id: userId,
+        type: "match_accepted",
+        title: "Donor accepted",
+        message: `A donor accepted the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
+        request_id: bloodRequest.id,
+        match_id,
+      })),
     ]);
 
     return Response.json({
       message: "Match accepted",
       match_id,
       status: "Accepted",
-      otp, // returned to donor UI for check-in screen
+      otp,
       expires_at: expiresAt,
-      token_id: token[0]?.id ?? null,
-      request: updatedRequest[0] ?? null,
+      otp_ttl_seconds: getOtpTtlSeconds(),
+      token_id: token?.id ?? null,
+      request: updatedRequest ?? null,
     });
   } catch (err) {
     console.error("[POST /api/matches/respond]", err);

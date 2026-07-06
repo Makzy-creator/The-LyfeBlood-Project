@@ -4,7 +4,7 @@
 		"**/.server/**/*",
 		"**/.client/**/*",
 		".react-router/types/**/*",
-		"./src/global.d.ts"
+		"src/global.d.ts"
 	],
 	"compilerOptions": {
 		"lib": ["DOM", "DOM.Iterable", "ES2022"],
@@ -15,8 +15,8 @@
 		"jsx": "react-jsx",
 		"allowJs": true,
 		"checkJs": false,
-		"rootDirs": [".", "./.react-router/types"],
-		"baseUrl": ".",
+		"rootDirs": ["", ".react-router/types"],
+		"baseUrl": "",
 		"esModuleInterop": true,
 		"verbatimModuleSyntax": true,
 		"noEmit": true,
@@ -24,7 +24,7 @@
 		"skipLibCheck": true,
 		"strict": true,
 		"paths": {
-			"@/*": ["./src/*"]
+			"@/*": ["src/*"]
 		}
 	}
 }

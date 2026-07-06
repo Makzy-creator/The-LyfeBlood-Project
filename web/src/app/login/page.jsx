@@ -68,10 +68,10 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const { user } = await apiLogin({ email: email.trim(), password });
+      const { user, token } = await apiLogin({ email: email.trim(), password });
 
       // Persist real user in global context
-      login(user);
+      login({ user, token });
       setLoading(false);
       setDone(true);
 
@@ -81,27 +81,6 @@ export default function LoginPage() {
 
       navigate(destination);
     } catch (err) {
-      // Dev fallback: if API is failing locally, create a mock user so you can continue.
-      if (typeof window !== "undefined" && window.location.hostname === "localhost") {
-        const mockUser = {
-          id: `dev-${Date.now()}`,
-          full_name: email.split("@")[0],
-          email: email.trim().toLowerCase(),
-          role: "donor",
-          blood_type: null,
-          location: null,
-          availability_status: 0,
-          is_verified: 1,
-          created_at: new Date().toISOString(),
-        };
-        login(mockUser);
-        setLoading(false);
-        setDone(true);
-        const destination = ROLE_ROUTE_MAP[mockUser.role] ?? "/dashboard";
-        navigate(destination);
-        return;
-      }
-
       setError(
         err?.status === 401
           ? "Incorrect email or password. Please try again."

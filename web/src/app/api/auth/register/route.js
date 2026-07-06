@@ -3,6 +3,7 @@
  * Body: { full_name, email, phone, password, role, blood_type?, location? }
  */
 import { saveBypassUser } from "../bypass-store";
+import { createSessionToken, hashPassword } from "@/app/api/utils/auth";
 import { createSupabaseServerClient, normalizeEmail } from "@/app/api/utils/supabase";
 
 function normalizeRole(role) {
@@ -68,7 +69,7 @@ export async function POST(request) {
       return Response.json({ error: "Email already registered" }, { status: 409 });
     }
 
-    const passwordHash = Buffer.from(password).toString("base64");
+    const passwordHash = hashPassword(password);
     const createdAt = new Date().toISOString();
 
     const { data: insertedRows, error: insertError } = await supabase
@@ -92,8 +93,10 @@ export async function POST(request) {
       throw insertError;
     }
 
+    const token = createSessionToken(insertedRows);
+
     return Response.json(
-      { user: insertedRows, message: "Registration successful" },
+      { user: insertedRows, token, message: "Registration successful" },
       { status: 201 },
     );
   } catch (err) {

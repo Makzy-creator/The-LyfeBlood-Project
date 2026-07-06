@@ -32,7 +32,7 @@ export default function BottomNavBar({ onNavigate }) {
         left: "50%",
         transform: "translateX(-50%)",
         width: "100%",
-        maxWidth: "480px",
+        maxWidth: "var(--lb-frame-max-width, 480px)",
         /* 64px nav + env() bottom inset for safe area (iOS notch) */
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
         backgroundColor: "#FFFFFF",

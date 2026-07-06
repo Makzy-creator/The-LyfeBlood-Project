@@ -3,11 +3,7 @@ import { REQUEST_STATUS } from "@/context/AppContext";
 
 /**
  * RequestStatusBadge
- * Full pill indicator with 4 status states.
- * Pending        → #FEF9C3 bg / #92400E text
- * Donor Matched  → #DBEAFE bg / #1E40AF text
- * Arrived at Lab → #EDE9FE bg / #5B21B6 text
- * Completed      → #D5F5E3 bg / #1E8449 text
+ * Full pill indicator for request status states.
  */
 
 const STATUS_CONFIG = {
@@ -17,23 +13,35 @@ const STATUS_CONFIG = {
     color: "#92400E",
     dot: "#D97706",
   },
+  [REQUEST_STATUS.VERIFIED]: {
+    label: "Verified",
+    bg: "#E0F2FE",
+    color: "#075985",
+    dot: "#0284C7",
+  },
   [REQUEST_STATUS.DONOR_MATCHED]: {
     label: "Donor Matched",
     bg: "#DBEAFE",
     color: "#1E40AF",
     dot: "#3B82F6",
   },
-  [REQUEST_STATUS.ARRIVED_AT_LAB]: {
-    label: "Arrived at Lab",
+  [REQUEST_STATUS.CHECKED_IN]: {
+    label: "Checked In",
     bg: "#EDE9FE",
     color: "#5B21B6",
     dot: "#7C3AED",
   },
-  [REQUEST_STATUS.COMPLETED]: {
-    label: "Completed",
+  [REQUEST_STATUS.FULFILLED]: {
+    label: "Fulfilled",
     bg: "#D5F5E3",
     color: "#1E8449",
     dot: "#27AE60",
+  },
+  [REQUEST_STATUS.CANCELLED]: {
+    label: "Cancelled",
+    bg: "#F4F4F4",
+    color: "#6B6B6B",
+    dot: "#9CA3AF",
   },
 };
 

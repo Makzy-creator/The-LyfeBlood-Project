@@ -13,7 +13,8 @@ import {
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
-import { useApp, MATCH_MOCK } from "@/context/AppContext";
+import { useApp } from "@/context/AppContext";
+import { apiGetMatch, apiRespondToMatch } from "@/utils/api";
 
 // ─── MAP WIDGET PLACEHOLDER ───────────────────────────────────────────────────
 function MapWidget({ distanceKm, hospitalName }) {
@@ -277,8 +278,12 @@ function MapWidget({ distanceKm, hospitalName }) {
 export default function MatchPage({ params }) {
   const { matchId } = params;
   const { isAuthenticated, dismissMatchAlert } = useApp();
+  const [match, setMatch] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [responding, setResponding] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [declined, setDeclined] = useState(false);
+  const [respondError, setRespondError] = useState(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !isAuthenticated) {
@@ -286,18 +291,80 @@ export default function MatchPage({ params }) {
     }
   }, [isAuthenticated]);
 
-  // Use MATCH_MOCK — in a real app this would be fetched by matchId
-  const match = MATCH_MOCK;
+  useEffect(() => {
+    if (!isAuthenticated || !matchId) return;
+    let alive = true;
+    apiGetMatch(matchId)
+      .then(({ match }) => {
+        if (!alive) return;
+        if (!match) {
+          setLoadError("Match not found");
+          return;
+        }
+        const request = match.request ?? {};
+        setMatch({
+          matchId: match.id,
+          requestId: match.request_id,
+          bloodGroup: request.blood_type_needed ?? null,
+          hospitalName: request.hospital_name ?? "Hospital",
+          ward: request.patient_ref ?? "Blood request",
+          location: request.location ?? "Location unavailable",
+          distanceKm: match.distance_km,
+          unitsNeeded: request.units_needed ?? 1,
+          urgencyNote: request.urgency_note ?? null,
+          patientCode: request.patient_ref ?? null,
+          tier: request.urgency_tier === "SOS" ? "sos" : "standard",
+          status: match.match_status,
+        });
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setLoadError(error.message ?? "Failed to load match");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isAuthenticated, matchId]);
 
-  const handleAccept = () => {
-    if (typeof window !== "undefined") {
-      window.location.href = `/donor/match/${matchId}/checkin`;
+  const handleAccept = async () => {
+    setResponding(true);
+    setRespondError(null);
+    try {
+      const response = await apiRespondToMatch({
+        match_id: matchId,
+        decision: "Accepted",
+      });
+      if (!response?.otp || !response?.expires_at) {
+        throw new Error("OTP was not issued. Please try again.");
+      }
+      if (typeof window !== "undefined" && response?.otp) {
+        window.sessionStorage.setItem(
+          `lyfeblood.match.${matchId}.otp`,
+          response.otp,
+        );
+        window.sessionStorage.setItem(
+          `lyfeblood.match.${matchId}.expires_at`,
+          response.expires_at,
+        );
+        window.sessionStorage.setItem(
+          `lyfeblood.match.${matchId}.ttl_seconds`,
+          String(response.otp_ttl_seconds ?? 900),
+        );
+      }
+      if (typeof window !== "undefined") {
+        window.location.href = `/donor/match/${matchId}/checkin`;
+      }
+    } catch (error) {
+      setRespondError(error?.message ?? "Unable to accept this request");
+    } finally {
+      setResponding(false);
     }
   };
 
   const handleDecline = async () => {
     setDeclining(true);
-    await new Promise((r) => setTimeout(r, 600));
+    await apiRespondToMatch({ match_id: matchId, decision: "Declined" });
     setDeclined(true);
     dismissMatchAlert();
     await new Promise((r) => setTimeout(r, 800));
@@ -329,6 +396,25 @@ export default function MatchPage({ params }) {
         >
           Request declined. Redirecting you home…
         </p>
+      </div>
+    );
+  }
+
+  if (loadError || !match) {
+    return (
+      <div
+        style={{
+          flex: 1,
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px",
+          color: "#6B6B6B",
+          fontWeight: 600,
+        }}
+      >
+        {loadError ?? "Loading match..."}
       </div>
     );
   }
@@ -394,7 +480,7 @@ export default function MatchPage({ params }) {
                 letterSpacing: "0.06em",
               }}
             >
-              SOS ALERT
+              MATCH ALERT
             </span>
           </div>
           <AlertTriangle size={20} color="#FFFFFF" />
@@ -421,7 +507,7 @@ export default function MatchPage({ params }) {
                 margin: "0 0 1px",
               }}
             >
-              You have been matched for an urgent O- request
+              You have been matched for a {match.bloodGroup} request
             </p>
             <p
               style={{
@@ -431,8 +517,7 @@ export default function MatchPage({ params }) {
                 opacity: 0.8,
               }}
             >
-              Please review and respond within 10 minutes to keep your response
-              rate high.
+              Please review and respond quickly to keep your response rate high.
             </p>
           </div>
         </div>
@@ -480,7 +565,7 @@ export default function MatchPage({ params }) {
                   display: "inline-block",
                 }}
               />
-              SOS · {match.unitsNeeded} units needed
+              {match.tier === "sos" ? "SOS" : "Standard"} · {match.unitsNeeded} units needed
             </span>
           </div>
 
@@ -690,12 +775,32 @@ export default function MatchPage({ params }) {
               paddingBottom: "32px",
             }}
           >
-            <PrimaryButton onClick={handleAccept} icon={CheckCircle2}>
-              Accept This Request
+            <PrimaryButton
+              onClick={handleAccept}
+              disabled={responding || declining || match.status !== "Alerted"}
+              icon={CheckCircle2}
+            >
+              {responding ? "Accepting..." : "Accept This Request"}
             </PrimaryButton>
+            {respondError && (
+              <p
+                style={{
+                  backgroundColor: "#FADBD8",
+                  borderRadius: "8px",
+                  color: "#922B21",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  margin: 0,
+                  padding: "10px 12px",
+                  textAlign: "center",
+                }}
+              >
+                {respondError}
+              </p>
+            )}
             <SecondaryButton
               onClick={handleDecline}
-              disabled={declining}
+              disabled={responding || declining || match.status !== "Alerted"}
               icon={X}
             >
               {declining ? "Declining…" : "Decline"}

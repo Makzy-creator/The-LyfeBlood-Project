@@ -1,18 +1,20 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import TopAppBar from "@/components/ui/TopAppBar";
 import BottomNavBar from "@/components/ui/BottomNavBar";
 import RequestCard from "@/components/ui/RequestCard";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
-import { useApp, REQUEST_STATUS } from "@/context/AppContext";
+import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from "@/context/AppContext";
 import {
   Droplets,
   LogOut,
   AlertTriangle,
-  CheckCircle2,
   Bell,
+  Plus,
+  X,
 } from "lucide-react";
 
 const ROLE_HOME_CONFIG = {
@@ -25,13 +27,13 @@ const ROLE_HOME_CONFIG = {
   patient_family: {
     greeting: "We're here to help.",
     body: "Post a blood request or track an existing one. Matched donors will be notified immediately.",
-     cta: "Post New Request",
+     cta: "Create a Request",
     ctaIcon: AlertTriangle,
   },
   requester: {
     greeting: "We're here to help.",
     body: "Post a blood request or track an existing one. Matched donors will be notified immediately.",
-    cta: "Post New Request",
+    cta: "Create a Request",
     ctaIcon: AlertTriangle,
   },
   hospital_officer: {
@@ -49,21 +51,303 @@ const ROLE_HOME_CONFIG = {
 
 };
 
+function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
+  const [form, setForm] = useState({
+    hospitalName: "",
+    bloodGroup: "",
+    unitsNeeded: 1,
+    patientCode: "",
+    location: "",
+    urgencyNote: "",
+  });
+  const [errors, setErrors] = useState({});
+
+  const inputStyle = {
+    width: "100%",
+    minHeight: "46px",
+    borderRadius: "8px",
+    border: "1.5px solid #C8C8C8",
+    paddingInline: "12px",
+    fontSize: "14px",
+    color: "#1A1A1A",
+    backgroundColor: "#FFFFFF",
+    outline: "none",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+  };
+
+  const updateField = (key, value) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    setErrors((current) => ({ ...current, [key]: "" }));
+  };
+
+  const validate = () => {
+    const nextErrors = {};
+    if (!form.hospitalName.trim()) nextErrors.hospitalName = "Hospital is required.";
+    if (!form.bloodGroup) nextErrors.bloodGroup = "Blood group is required.";
+    if (!Number(form.unitsNeeded) || Number(form.unitsNeeded) < 1) {
+      nextErrors.unitsNeeded = "Units must be at least 1.";
+    }
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    if (!validate()) return;
+    onSubmit({
+      ...form,
+      hospitalName: form.hospitalName.trim(),
+      location: form.location.trim(),
+      patientCode: form.patientCode.trim(),
+      urgencyNote: form.urgencyNote.trim(),
+      unitsNeeded: Number(form.unitsNeeded),
+    });
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 200,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close request form"
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundColor: "rgba(0,0,0,0.5)",
+          border: "none",
+          cursor: "pointer",
+        }}
+      />
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: "480px",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          backgroundColor: "#FFFFFF",
+          borderRadius: "16px 16px 0 0",
+          padding: "16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "14px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0, fontSize: "17px", fontWeight: "800", color: "#1A1A1A" }}>
+            Create a Request
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "8px",
+              border: "none",
+              backgroundColor: "#F4F4F4",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <X size={18} color="#1A1A1A" />
+          </button>
+        </div>
+
+        {submitError && (
+          <p
+            role="alert"
+            style={{
+              margin: 0,
+              padding: "10px 12px",
+              borderRadius: "8px",
+              backgroundColor: "#FADBD8",
+              color: "#922B21",
+              fontSize: "13px",
+              fontWeight: "700",
+            }}
+          >
+            {submitError}
+          </p>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Hospital / Facility <span style={{ color: "#C0392B" }}>*</span>
+          </label>
+          <input
+            style={inputStyle}
+            value={form.hospitalName}
+            onChange={(event) => updateField("hospitalName", event.target.value)}
+            placeholder="e.g. Federal Medical Centre Owerri"
+            disabled={isSubmitting}
+          />
+          {errors.hospitalName && (
+            <span style={{ fontSize: "12px", color: "#922B21" }}>{errors.hospitalName}</span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Blood Group Needed <span style={{ color: "#C0392B" }}>*</span>
+          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            {BLOOD_GROUPS.map((group) => (
+              <button
+                key={group}
+                type="button"
+                onClick={() => updateField("bloodGroup", group)}
+                disabled={isSubmitting}
+                style={{
+                  background: "none",
+                  border: `2px solid ${form.bloodGroup === group ? "#C0392B" : "#C8C8C8"}`,
+                  borderRadius: "8px",
+                  padding: 0,
+                  cursor: isSubmitting ? "not-allowed" : "pointer",
+                  boxShadow: form.bloodGroup === group ? "0 0 0 3px #FADBD8" : "none",
+                }}
+              >
+                <BloodGroupTag group={group} size="md" />
+              </button>
+            ))}
+          </div>
+          {errors.bloodGroup && (
+            <span style={{ fontSize: "12px", color: "#922B21" }}>{errors.bloodGroup}</span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Units Needed <span style={{ color: "#C0392B" }}>*</span>
+          </label>
+          <input
+            style={inputStyle}
+            type="number"
+            min="1"
+            max="20"
+            value={form.unitsNeeded}
+            onChange={(event) => updateField("unitsNeeded", event.target.value)}
+            disabled={isSubmitting}
+          />
+          {errors.unitsNeeded && (
+            <span style={{ fontSize: "12px", color: "#922B21" }}>{errors.unitsNeeded}</span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Patient / Case Reference
+          </label>
+          <input
+            style={inputStyle}
+            value={form.patientCode}
+            onChange={(event) => updateField("patientCode", event.target.value)}
+            placeholder="Optional"
+            disabled={isSubmitting}
+          />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Location
+          </label>
+          <input
+            style={inputStyle}
+            value={form.location}
+            onChange={(event) => updateField("location", event.target.value)}
+            placeholder="Optional"
+            disabled={isSubmitting}
+          />
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Note
+          </label>
+          <textarea
+            style={{ ...inputStyle, minHeight: "80px", paddingTop: "10px", resize: "none" }}
+            value={form.urgencyNote}
+            onChange={(event) => updateField("urgencyNote", event.target.value)}
+            placeholder="Optional"
+            disabled={isSubmitting}
+          />
+        </div>
+
+        <PrimaryButton type="submit" disabled={isSubmitting} icon={Plus}>
+          {isSubmitting ? "Creating..." : "Create Request"}
+        </PrimaryButton>
+        <SecondaryButton onClick={onClose} disabled={isSubmitting}>
+          Cancel
+        </SecondaryButton>
+      </form>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const {
     currentUser,
     isAuthenticated,
     bloodRequests,
+    addRequest,
     logout,
     unreadCount,
     markAllNotificationsRead,
   } = useApp();
+  const [showRequestForm, setShowRequestForm] = useState(false);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestError, setRequestError] = useState("");
+  const [requestSuccess, setRequestSuccess] = useState("");
 
   useEffect(() => {
     if (typeof window !== "undefined" && !isAuthenticated) {
       window.location.href = "/login";
     }
   }, [isAuthenticated]);
+
+  const handleOpenCreateRequest = () => {
+    if (!["patient_family", "requester"].includes(currentUser?.role)) return;
+    setRequestError("");
+    setRequestSuccess("");
+    setShowRequestForm(true);
+  };
+
+  const handleCreateRequest = async (formData) => {
+    setRequestSubmitting(true);
+    setRequestError("");
+    try {
+      await addRequest({
+        tier: "standard",
+        bloodGroup: formData.bloodGroup,
+        unitsNeeded: formData.unitsNeeded,
+        hospitalName: formData.hospitalName,
+        patientCode: formData.patientCode,
+        requestedBy: currentUser.email ? currentUser.id : null,
+        urgencyNote: formData.urgencyNote,
+        location: formData.location || currentUser.location,
+      });
+      setRequestSuccess("Request created and added to the live feed.");
+      setShowRequestForm(false);
+    } catch (error) {
+      setRequestError(error?.message ?? "Failed to create request.");
+    } finally {
+      setRequestSubmitting(false);
+    }
+  };
 
   if (!currentUser) {
     return (
@@ -223,6 +507,7 @@ export default function DashboardPage() {
             {config.body}
           </p>
           <button
+            onClick={handleOpenCreateRequest}
             style={{
               width: "100%",
               height: "44px",
@@ -244,6 +529,24 @@ export default function DashboardPage() {
             {config.cta}
           </button>
         </section>
+
+        {requestSuccess && (
+          <div
+            role="status"
+            style={{
+              margin: "12px 12px 0",
+              backgroundColor: "#D5F5E3",
+              borderRadius: "10px",
+              padding: "12px 14px",
+              color: "#1E8449",
+              fontSize: "13px",
+              fontWeight: "700",
+              border: "1px solid #ABEBC6",
+            }}
+          >
+            {requestSuccess}
+          </div>
+        )}
 
         {/* ── NOTIFICATIONS BANNER ───────────────────────────────────── */}
         {unreadCount > 0 && (
@@ -307,7 +610,10 @@ export default function DashboardPage() {
             >
               {
                 bloodRequests.filter(
-                  (r) => r.status !== REQUEST_STATUS.COMPLETED,
+                  (r) =>
+                    ![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(
+                      r.status,
+                    ),
                 ).length
               }{" "}
               active
@@ -318,7 +624,11 @@ export default function DashboardPage() {
             style={{ display: "flex", flexDirection: "column", gap: "10px" }}
           >
             {bloodRequests.map((req) => (
-              <RequestCard key={req.id} request={req} />
+              <RequestCard
+                key={req.id}
+                request={req}
+                onClick={() => navigate(`/requests/${req.id}`)}
+              />
             ))}
           </div>
         </section>
@@ -332,7 +642,20 @@ export default function DashboardPage() {
       </div>
 
       {/* Bottom Nav */}
-      <BottomNavBar />
+      <BottomNavBar
+        onNavigate={(key) => {
+          if (key === "profile") navigate("/profile");
+        }}
+      />
+
+      {showRequestForm && (
+        <PatientRequestSheet
+          onClose={() => setShowRequestForm(false)}
+          onSubmit={handleCreateRequest}
+          isSubmitting={requestSubmitting}
+          submitError={requestError}
+        />
+      )}
 
       <style jsx global>{`
         * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }

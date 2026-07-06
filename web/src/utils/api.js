@@ -25,10 +25,27 @@ const BASE_URL =
 
 // ── Low-level fetch wrapper ───────────────────────────────────────────────────
 
+const AUTH_TOKEN_STORAGE_KEY = "lyfeblood.auth.token";
+
+function getStoredAuthToken() {
+  try {
+    return typeof window !== "undefined"
+      ? window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function apiFetch(path, options = {}) {
   const url = `${BASE_URL}${path}`;
+  const token = getStoredAuthToken();
   const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers ?? {}),
+    },
     ...options,
   });
 
@@ -78,6 +95,18 @@ export async function apiLogin(payload) {
   });
 }
 
+/**
+ * Update a user profile.
+ * @param {{ id: string, full_name: string, phone?: string, role: string, blood_type?: string, location?: string, availability_status?: number }} payload
+ * @returns {{ user, message }}
+ */
+export async function apiUpdateProfile(payload) {
+  return apiFetch("/api/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 // ── Blood Requests ────────────────────────────────────────────────────────────
 
 /**
@@ -91,6 +120,17 @@ export async function apiGetRequests(params = {}) {
   if (params.limit) qs.set("limit", String(params.limit));
   const query = qs.toString() ? `?${qs}` : "";
   return apiFetch(`/api/requests${query}`);
+}
+
+export async function apiGetRequest(requestId) {
+  return apiFetch(`/api/requests/${encodeURIComponent(requestId)}`);
+}
+
+export async function apiUpdateRequestStatus(payload) {
+  return apiFetch("/api/requests", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 /**
@@ -115,6 +155,19 @@ export async function apiCreateRequest(payload) {
  * @param {{ match_id: string, decision: 'Accepted' | 'Declined' }} payload
  * @returns {{ message, status, otp?, expires_at?, token_id? }}
  */
+export async function apiGetMatches(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.id) qs.set("id", params.id);
+  if (params.request_id) qs.set("request_id", params.request_id);
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch(`/api/matches${query}`);
+}
+
+export async function apiGetMatch(matchId) {
+  const { matches } = await apiGetMatches({ id: matchId });
+  return { match: matches?.[0] ?? null };
+}
+
 export async function apiRespondToMatch(payload) {
   return apiFetch("/api/matches/respond", {
     method: "POST",
@@ -127,8 +180,8 @@ export async function apiRespondToMatch(payload) {
 /**
  * Verify a 6-digit OTP at the hospital lab.
  * Advances the associated blood_request to 'Arrived'.
- * @param {{ otp: string, match_id?: string }} payload
- * @returns {{ message, token_id, request_id, new_status }}
+ * @param {{ otp: string, match_id: string }} payload
+ * @returns {{ message, token_id, request_id, checked_in_at, verified_by, new_status }}
  */
 export async function apiVerifyToken(payload) {
   return apiFetch("/api/tokens/verify", {
@@ -137,11 +190,35 @@ export async function apiVerifyToken(payload) {
   });
 }
 
+// ── Notifications ────────────────────────────────────────────────────────────
+
+export async function apiGetNotifications(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.unread) qs.set("unread", "true");
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch(`/api/notifications${query}`);
+}
+
+export async function apiUpdateNotifications(payload = {}) {
+  return apiFetch("/api/notifications", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export default {
   register: apiRegister,
   login: apiLogin,
+  updateProfile: apiUpdateProfile,
   getRequests: apiGetRequests,
+  getRequest: apiGetRequest,
+  updateRequestStatus: apiUpdateRequestStatus,
   createRequest: apiCreateRequest,
+  getMatches: apiGetMatches,
+  getMatch: apiGetMatch,
   respondToMatch: apiRespondToMatch,
   verifyToken: apiVerifyToken,
+  getNotifications: apiGetNotifications,
+  updateNotifications: apiUpdateNotifications,
 };

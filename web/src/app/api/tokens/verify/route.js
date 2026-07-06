@@ -1,99 +1,184 @@
 /**
  * POST /api/tokens/verify
- * Body: { otp: string, match_id?: string }
- *
- * Validates the 6-digit OTP against active verification_tokens.
- * On success, advances the associated blood_request to 'Arrived' (atomic).
- *
- * Error cases:
- *   400 — OTP format invalid
- *   401 — OTP not found or already expired/used
- *   500 — DB write failure
+ * Body: { otp: string, match_id: string }
  */
-import sql from "@/app/api/utils/sql";
+import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { verifyOtpHash } from "@/app/api/utils/otp";
+import {
+  createNotifications,
+  requestRecipientIds,
+} from "@/app/api/utils/notifications";
 
 export async function POST(request) {
   try {
+    const auth = requireAuth(request, ["hospital_staff", "admin"]);
+    if (auth.error) return auth.error;
+    const role = getCanonicalRole(auth.user.role);
+
     const body = await request.json();
     const { otp, match_id } = body;
 
-    if (!otp || String(otp).length !== 6)
+    const normalizedOtp = String(otp ?? "").trim();
+    if (!/^\d{6}$/.test(normalizedOtp)) {
       return Response.json(
         { error: "A 6-digit OTP is required" },
         { status: 400 },
       );
-
-    const now = new Date().toISOString();
-
-    // ── Lazy-expire stale tokens (best-effort, non-blocking intent) ───────────
-    sql`
-      UPDATE verification_tokens
-      SET    status = 'Expired'
-      WHERE  status = 'Active' AND expires_at < ${now}
-    `.catch(() => {}); // intentionally non-blocking
-
-    // ── Look up matching active token + join request_id from matches ──────────
-    let tokenRows;
-
-    if (match_id) {
-      tokenRows = await sql`
-        SELECT vt.id, vt.match_id, vt.secure_otp, vt.expires_at, vt.status,
-               m.request_id
-        FROM   verification_tokens vt
-        JOIN   matches m ON m.id = vt.match_id
-        WHERE  vt.secure_otp = ${String(otp)}
-          AND  vt.status     = 'Active'
-          AND  vt.match_id   = ${match_id}
-        LIMIT 1
-      `;
-    } else {
-      tokenRows = await sql`
-        SELECT vt.id, vt.match_id, vt.secure_otp, vt.expires_at, vt.status,
-               m.request_id
-        FROM   verification_tokens vt
-        JOIN   matches m ON m.id = vt.match_id
-        WHERE  vt.secure_otp = ${String(otp)}
-          AND  vt.status     = 'Active'
-        LIMIT 1
-      `;
+    }
+    if (!match_id) {
+      return Response.json(
+        { error: "match_id is required for check-in verification" },
+        { status: 400 },
+      );
     }
 
-    if (tokenRows.length === 0)
+    const supabase = createSupabaseServerClient();
+    const now = new Date().toISOString();
+
+    await supabase
+      .from("verification_tokens")
+      .update({ status: "Expired" })
+      .eq("status", "Active")
+      .lt("expires_at", now);
+
+    const { data: tokenRows, error: tokenLookupError } = await supabase
+      .from("verification_tokens")
+      .select("id, match_id, secure_otp, expires_at, status")
+      .eq("match_id", match_id)
+      .order("created_at", { ascending: false });
+    if (tokenLookupError) throw tokenLookupError;
+
+    const matchingToken = (tokenRows ?? []).find((row) =>
+      verifyOtpHash(normalizedOtp, row.secure_otp),
+    );
+    if (matchingToken?.status === "Used") {
+      return Response.json({ error: "OTP has already been used" }, { status: 409 });
+    }
+    if (matchingToken?.status === "Expired") {
+      return Response.json({ error: "OTP has expired" }, { status: 401 });
+    }
+
+    const token =
+      matchingToken?.status === "Active" ? matchingToken : null;
+    if (!token) {
       return Response.json(
         { error: "Invalid or expired OTP" },
         { status: 401 },
       );
+    }
 
-    const token = tokenRows[0];
-
-    // ── Application-layer expiry check (belt-and-suspenders) ─────────────────
     if (new Date(token.expires_at) < new Date()) {
-      await sql`
-        UPDATE verification_tokens SET status = 'Expired' WHERE id = ${token.id}
-      `;
+      const { error } = await supabase
+        .from("verification_tokens")
+        .update({ status: "Expired" })
+        .eq("id", token.id);
+
+      if (error) throw error;
+
       return Response.json({ error: "OTP has expired" }, { status: 401 });
     }
 
-    // ── Atomic: mark token Used + advance request to Arrived ─────────────────
-    const [usedToken, arrivedRequest] = await sql.transaction([
-      sql`
-        UPDATE verification_tokens SET status = 'Used'
-        WHERE id = ${token.id}
-        RETURNING id, status
-      `,
-      sql`
-        UPDATE blood_requests SET status = 'Arrived'
-        WHERE id = ${token.request_id}
-        RETURNING id, status, hospital_name, blood_type_needed
-      `,
+    const { data: match, error: matchError } = await supabase
+      .from("matches")
+      .select("id, request_id, donor_id, match_status")
+      .eq("id", token.match_id)
+      .single();
+
+    if (matchError) throw matchError;
+    if (match.match_status !== "Accepted") {
+      return Response.json(
+        { error: "Match is not ready for check-in" },
+        { status: 409 },
+      );
+    }
+
+    const { data: donor, error: donorError } = await supabase
+      .from("users")
+      .select("id, full_name, email, phone, blood_type, is_verified")
+      .eq("id", match.donor_id)
+      .single();
+
+    if (donorError) throw donorError;
+    if (!donor || (donor.is_verified !== true && donor.is_verified !== 1)) {
+      return Response.json(
+        { error: "Donor identity is not verified" },
+        { status: 403 },
+      );
+    }
+
+    const { data: bloodRequest, error: requestLookupError } = await supabase
+      .from("blood_requests")
+      .select("id, requested_by, hospital_id")
+      .eq("id", match.request_id)
+      .single();
+
+    if (requestLookupError) throw requestLookupError;
+
+    if (
+      role !== "admin" &&
+      bloodRequest?.requested_by !== auth.user.sub &&
+      bloodRequest?.hospital_id !== auth.user.sub
+    ) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const checkedInAt = new Date().toISOString();
+    const { data: usedToken, error: tokenUpdateError } = await supabase
+      .from("verification_tokens")
+      .update({
+        status: "Used",
+        used_at: checkedInAt,
+        checked_in_at: checkedInAt,
+        verified_by: auth.user.sub,
+      })
+      .eq("id", token.id)
+      .eq("status", "Active")
+      .select("id")
+      .maybeSingle();
+
+    if (tokenUpdateError) throw tokenUpdateError;
+    if (!usedToken) {
+      return Response.json({ error: "OTP has already been used" }, { status: 409 });
+    }
+
+    const { data: arrivedRequest, error: requestUpdateError } = await supabase
+      .from("blood_requests")
+      .update({ status: "checked_in" })
+      .eq("id", match.request_id)
+      .select("id, status, hospital_name, blood_type_needed")
+      .single();
+
+    if (requestUpdateError) throw requestUpdateError;
+
+    await createNotifications(supabase, [
+      {
+        user_id: donor.id,
+        type: "otp_checked_in",
+        title: "Check-in verified",
+        message: `Your arrival at ${arrivedRequest.hospital_name} was verified.`,
+        request_id: match.request_id,
+        match_id: match.id,
+      },
+      ...requestRecipientIds(bloodRequest).map((userId) => ({
+        user_id: userId,
+        type: "otp_checked_in",
+        title: "Donor checked in",
+        message: `${donor.full_name ?? "A donor"} checked in for ${arrivedRequest.blood_type_needed}.`,
+        request_id: match.request_id,
+        match_id: match.id,
+      })),
     ]);
 
     return Response.json({
       message: "Check-in verified. Donor arrival confirmed.",
       token_id: token.id,
-      request_id: token.request_id,
-      request: arrivedRequest[0] ?? null,
-      new_status: "Arrived",
+      request_id: match.request_id,
+      request: arrivedRequest ?? null,
+      donor,
+      checked_in_at: checkedInAt,
+      verified_by: auth.user.sub,
+      new_status: "checked_in",
     });
   } catch (err) {
     console.error("[POST /api/tokens/verify]", err);

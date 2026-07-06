@@ -7,12 +7,18 @@
  *
  * SOS-tier requests return first in GET /api/requests due to ORDER BY priority.
  */
-import sql from "@/app/api/utils/sql";
+import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { createMatchesForRequest } from "@/app/api/utils/matching";
+import { notifyRequestRecipients } from "@/app/api/utils/notifications";
 
 const VALID_TIERS = ["Standard", "Urgent", "SOS"];
 
 export async function POST(request) {
   try {
+    const auth = requireAuth(request, ["patient", "hospital_staff", "admin"]);
+    if (auth.error) return auth.error;
+
     const body = await request.json();
     const {
       hospital_name,
@@ -21,7 +27,10 @@ export async function POST(request) {
       units_needed = 1,
       patient_ref,
       location,
+      latitude,
+      longitude,
       urgency_note,
+      hospital_id,
       requested_by,
     } = body;
 
@@ -43,27 +52,46 @@ export async function POST(request) {
       );
 
     // ── Insert ────────────────────────────────────────────────────────────────
-    const [bloodRequest] = await sql`
-      INSERT INTO blood_requests
-        (hospital_name, patient_ref, blood_type_needed, urgency_tier,
-         location, requested_by, units_needed, urgency_note, units_fulfilled, status)
-      VALUES (
-        ${hospital_name.trim()},
-        ${patient_ref ?? null},
-        ${blood_type_needed},
-        ${urgency_tier},
-        ${location ?? null},
-        ${requested_by ?? null},
-        ${units_needed},
-        ${urgency_note ?? null},
-        0,
-        'Pending'
-      )
-      RETURNING *
-    `;
+    const role = getCanonicalRole(auth.user.role);
+    const assignedHospitalId =
+      role === "hospital_staff" ? auth.user.sub : role === "admin" ? (hospital_id ?? null) : null;
+
+    const supabase = createSupabaseServerClient();
+    const { data: bloodRequest, error } = await supabase
+      .from("blood_requests")
+      .insert({
+        hospital_name: hospital_name.trim(),
+        patient_ref: patient_ref ?? null,
+        blood_type_needed,
+        urgency_tier,
+        location: location ?? null,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        requested_by: auth.user.sub,
+        hospital_id: assignedHospitalId,
+        units_needed,
+        urgency_note: urgency_note ?? null,
+        units_fulfilled: 0,
+        status: "pending",
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    await notifyRequestRecipients(supabase, bloodRequest, {
+      type: "request_created",
+      title: "Blood request created",
+      message: `${bloodRequest.blood_type_needed} request created at ${bloodRequest.hospital_name}.`,
+      request_id: bloodRequest.id,
+    });
+
+    const matching = await createMatchesForRequest(supabase, bloodRequest);
 
     return Response.json(
-      { request: bloodRequest, message: "Request created" },
+      { request: bloodRequest, matching, message: "Request created" },
       { status: 201 },
     );
   } catch (err) {

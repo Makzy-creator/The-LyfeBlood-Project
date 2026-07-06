@@ -1,28 +1,17 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   Shield,
   CheckCircle2,
-  RefreshCw,
   Building2,
   AlertTriangle,
 } from "lucide-react";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
-import { useApp, MATCH_MOCK } from "@/context/AppContext";
-import { apiVerifyToken } from "@/utils/api";
+import { useApp } from "@/context/AppContext";
+import { apiGetMatch } from "@/utils/api";
 
 const OTP_DURATION_SECONDS = 15 * 60; // 15 minutes
-
-/** Cryptographically random 6-digit OTP — no Math.random() bias. */
-function generateOTP() {
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    const buf = new Uint32Array(1);
-    crypto.getRandomValues(buf);
-    return String(100000 + (buf[0] % 900000));
-  }
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
 
 function formatCountdown(seconds) {
   const m = Math.floor(seconds / 60);
@@ -32,15 +21,15 @@ function formatCountdown(seconds) {
 
 export default function CheckInPage({ params }) {
   const { matchId } = params;
-  const { isAuthenticated, updateRequestStatus } = useApp();
+  const { isAuthenticated } = useApp();
 
-  const [otp] = useState(() => generateOTP());
+  const [otp, setOtp] = useState("");
+  const [expiresAt, setExpiresAt] = useState(null);
+  const [durationSeconds, setDurationSeconds] = useState(OTP_DURATION_SECONDS);
+  const [match, setMatch] = useState(null);
   const [secondsLeft, setSecondsLeft] = useState(OTP_DURATION_SECONDS);
-  const [confirmed, setConfirmed] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [confirmError, setConfirmError] = useState(null);
-  const intervalRef = useRef(null);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !isAuthenticated) {
@@ -48,42 +37,68 @@ export default function CheckInPage({ params }) {
     }
   }, [isAuthenticated]);
 
-  // 15-minute countdown ticker
   useEffect(() => {
-    intervalRef.current = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) {
-          clearInterval(intervalRef.current);
-          return 0;
-        }
-        return s - 1;
+    if (!isAuthenticated || !matchId) return;
+    if (typeof window !== "undefined") {
+      const storedOtp =
+        window.sessionStorage.getItem(`lyfeblood.match.${matchId}.otp`) ?? "";
+      const storedExpiresAt = window.sessionStorage.getItem(
+        `lyfeblood.match.${matchId}.expires_at`,
+      );
+      const storedTtl = Number.parseInt(
+        window.sessionStorage.getItem(`lyfeblood.match.${matchId}.ttl_seconds`) ?? "",
+        10,
+      );
+      setOtp(storedOtp);
+      setExpiresAt(storedExpiresAt);
+      if (Number.isFinite(storedTtl) && storedTtl > 0) {
+        setDurationSeconds(storedTtl);
+      }
+      if (!storedOtp || !storedExpiresAt) {
+        setLoadError("OTP details are unavailable. Please accept the match again.");
+      }
+    }
+    let alive = true;
+    apiGetMatch(matchId)
+      .then(({ match }) => {
+        if (!alive || !match) return;
+        const request = match.request ?? {};
+        setMatch({
+          requestId: match.request_id,
+          hospitalName: request.hospital_name ?? "Hospital",
+          ward: request.patient_ref ?? "Blood request",
+          patientCode: request.patient_ref ?? null,
+          bloodGroup: request.blood_type_needed ?? null,
+        });
+      })
+      .catch((error) => {
+        console.error("[CheckIn] Failed to load match:", error);
+        setLoadError(error?.message ?? "Failed to load check-in details");
       });
+    return () => {
+      alive = false;
+    };
+  }, [isAuthenticated, matchId]);
+
+  useEffect(() => {
+    if (!expiresAt) return;
+
+    const updateSecondsLeft = () => {
+      setSecondsLeft(
+        Math.max(0, Math.ceil((Date.parse(expiresAt) - Date.now()) / 1000)),
+      );
+    };
+
+    updateSecondsLeft();
+    const interval = setInterval(() => {
+      updateSecondsLeft();
     }, 1000);
-    return () => clearInterval(intervalRef.current);
-  }, []);
+    return () => clearInterval(interval);
+  }, [expiresAt]);
 
   const isExpired = secondsLeft === 0;
   const urgencyColor =
     secondsLeft < 120 ? "#922B21" : secondsLeft < 300 ? "#E67E22" : "#C0392B";
-
-  const handleConfirm = async () => {
-    setConfirming(true);
-    setConfirmError(null);
-    try {
-      // Try live API verification
-      await apiVerifyToken({ otp, match_id: matchId });
-    } catch (apiErr) {
-      // In demo mode the OTP was generated client-side and hasn't been
-      // inserted into the DB by the match-respond flow, so a 401 is expected.
-      // We fall back gracefully so the demo flow works end-to-end.
-      console.warn("[CheckIn] API fallback:", apiErr?.message);
-    }
-    // Always update local mock state so the UI reflects arrival
-    updateRequestStatus("req-001", "arrived_at_lab");
-    clearInterval(intervalRef.current);
-    setConfirmed(true);
-    setConfirming(false);
-  };
 
   const handleCopyOTP = () => {
     if (typeof navigator !== "undefined") {
@@ -92,125 +107,6 @@ export default function CheckInPage({ params }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
-  // ── CONFIRMED STATE ────────────────────────────────────────────────────────
-  if (confirmed) {
-    return (
-      <>
-        <div
-          style={{
-            flex: 1,
-            minHeight: "100vh",
-            backgroundColor: "#D5F5E3",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "32px 24px",
-            gap: "20px",
-          }}
-        >
-          <div
-            style={{
-              width: "100px",
-              height: "100px",
-              borderRadius: "50%",
-              backgroundColor: "#FFFFFF",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: "0 4px 20px rgba(39,174,96,0.3)",
-            }}
-          >
-            <CheckCircle2 size={52} color="#27AE60" strokeWidth={1.8} />
-          </div>
-          <h1
-            style={{
-              fontSize: "24px",
-              fontWeight: "800",
-              color: "#1A1A1A",
-              textAlign: "center",
-              margin: 0,
-            }}
-          >
-            Arrival Confirmed!
-          </h1>
-          <p
-            style={{
-              fontSize: "14px",
-              color: "#4A4A4A",
-              textAlign: "center",
-              lineHeight: "1.6",
-              margin: 0,
-            }}
-          >
-            The hospital has been notified of your arrival. Please proceed to
-            the <strong>Blood Bank / Laboratory</strong> and present your OTP
-            code to the Lab Manager.
-          </p>
-          <div
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: "12px",
-              padding: "20px",
-              width: "100%",
-              textAlign: "center",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-            }}
-          >
-            <p
-              style={{
-                fontSize: "11px",
-                fontWeight: "700",
-                color: "#6B6B6B",
-                margin: "0 0 8px",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-              }}
-            >
-              Your OTP Code
-            </p>
-            <p
-              style={{
-                fontSize: "32px",
-                fontWeight: "800",
-                color: "#1A1A1A",
-                letterSpacing: "8px",
-                margin: 0,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {otp}
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              if (typeof window !== "undefined")
-                window.location.href = "/donor/home";
-            }}
-            style={{
-              width: "100%",
-              height: "52px",
-              backgroundColor: "#27AE60",
-              color: "#FFFFFF",
-              fontSize: "15px",
-              fontWeight: "700",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            Return to Dashboard
-          </button>
-        </div>
-        <style jsx global>{`
-          * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
-          body { margin: 0; padding: 0; }
-        `}</style>
-      </>
-    );
-  }
 
   return (
     <>
@@ -324,13 +220,13 @@ export default function CheckInPage({ params }) {
                   margin: "0 0 2px",
                 }}
               >
-                {MATCH_MOCK.hospitalName}
+                {match?.hospitalName ?? "Loading hospital..."}
               </p>
               <p style={{ fontSize: "12px", color: "#6B6B6B", margin: 0 }}>
-                {MATCH_MOCK.ward} · {MATCH_MOCK.patientCode}
+                {match?.ward ?? "Blood request"} · {match?.patientCode ?? matchId}
               </p>
             </div>
-            <BloodGroupTag group={MATCH_MOCK.bloodGroup} size="md" />
+            <BloodGroupTag group={match?.bloodGroup} size="md" />
           </div>
 
           {/* ── OTP TOKEN CARD ────────────────────────────────────── */}
@@ -417,7 +313,7 @@ export default function CheckInPage({ params }) {
                   userSelect: "none",
                 }}
               >
-                {otp.split("").map((digit, i) => (
+                {(otp || "------").split("").map((digit, i) => (
                   <span
                     key={i}
                     style={{
@@ -476,7 +372,7 @@ export default function CheckInPage({ params }) {
                 <div
                   style={{
                     height: "100%",
-                    width: `${(secondsLeft / OTP_DURATION_SECONDS) * 100}%`,
+                    width: `${(secondsLeft / durationSeconds) * 100}%`,
                     backgroundColor: urgencyColor,
                     borderRadius: "2px",
                     transition: "width 1s linear, background-color 500ms",
@@ -624,12 +520,28 @@ export default function CheckInPage({ params }) {
 
           {/* CTA */}
           <div style={{ paddingBottom: "32px" }}>
+            {loadError && (
+              <p
+                style={{
+                  backgroundColor: "#FADBD8",
+                  borderRadius: "8px",
+                  color: "#922B21",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  margin: "0 0 10px",
+                  padding: "10px 12px",
+                  textAlign: "center",
+                }}
+              >
+                {loadError}
+              </p>
+            )}
             <PrimaryButton
-              onClick={handleConfirm}
-              disabled={confirming || confirmed || isExpired}
-              icon={confirming ? RefreshCw : CheckCircle2}
+              onClick={() => {}}
+              disabled
+              icon={CheckCircle2}
             >
-              {confirming ? "Confirming Arrival…" : "Confirm Check-In Arrival"}
+              Awaiting Hospital Verification
             </PrimaryButton>
             <p
               style={{

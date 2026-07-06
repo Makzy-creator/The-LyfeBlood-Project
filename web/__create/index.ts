@@ -11,7 +11,7 @@ import { cors } from 'hono/cors';
 import { proxy } from 'hono/proxy';
 import { bodyLimit } from 'hono/body-limit';
 import { requestId } from 'hono/request-id';
-import { createHonoServer } from 'react-router-hono-server/node';
+import { createHonoServer } from 'react-router-hono-server/cloudflare';
 import { serializeError } from 'serialize-error';
 import ws from 'ws';
 import NeonAdapter from './adapter';
@@ -35,8 +35,15 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
   };
 }
 
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error(
+    'DATABASE_URL is required for Neon-backed auth, request creation, match response, and token verification routes.'
+  );
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl,
 });
 const adapter = NeonAdapter(pool);
 
@@ -84,11 +91,17 @@ for (const method of ['post', 'put', 'patch'] as const) {
   );
 }
 
-if (process.env.AUTH_SECRET) {
-  app.use(
-    '*',
-    initAuthConfig((c) => ({
-      secret: c.env.AUTH_SECRET,
+app.use(
+  '*',
+  initAuthConfig((c) => {
+      const authSecret = c.env.AUTH_SECRET ?? process.env.AUTH_SECRET ?? 'dev-auth-secret-change-me';
+      const authUrl = c.env.AUTH_URL ?? process.env.AUTH_URL ?? process.env.NEXT_PUBLIC_CREATE_BASE_URL ?? 'http://localhost:4000';
+      const secureCookies = authUrl.startsWith('https://');
+
+      return {
+      secret: authSecret,
+      basePath: '/api/auth',
+      trustHost: true,
       pages: {
         signIn: '/account/signin',
         signOut: '/account/logout',
@@ -108,20 +121,20 @@ if (process.env.AUTH_SECRET) {
       cookies: {
         csrfToken: {
           options: {
-            secure: true,
-            sameSite: 'none',
+            secure: secureCookies,
+            sameSite: secureCookies ? 'none' : 'lax',
           },
         },
         sessionToken: {
           options: {
-            secure: true,
-            sameSite: 'none',
+            secure: secureCookies,
+            sameSite: secureCookies ? 'none' : 'lax',
           },
         },
         callbackUrl: {
           options: {
-            secure: true,
-            sameSite: 'none',
+            secure: secureCookies,
+            sameSite: secureCookies ? 'none' : 'lax',
           },
         },
       },
@@ -261,9 +274,9 @@ if (process.env.AUTH_SECRET) {
           },
         }),
       ],
-    }))
-  );
-}
+    };
+  })
+);
 app.all('/integrations/:path{.+}', async (c, next) => {
   const queryParams = c.req.query();
   const url = `${process.env.NEXT_PUBLIC_CREATE_BASE_URL ?? 'https://www.create.xyz'}/integrations/${c.req.param('path')}${Object.keys(queryParams).length > 0 ? `?${new URLSearchParams(queryParams).toString()}` : ''}`;

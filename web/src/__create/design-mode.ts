@@ -14,7 +14,7 @@ type GetStyleInfo = (resolved: { element: Element }) => {
 // background-color dropdown. Loaded conditionally because the package executes
 // `customElements.define()` at module-eval time, which crashes during SSR.
 if (typeof window !== 'undefined') {
-  void import('vanilla-colorful/hex-color-picker.js');
+  void import('vanilla-colorful');
 }
 
 function rgbToHex(rgb: string): string {

@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -776,6 +777,7 @@ function Step3Declaration({ form, setForm, role }) {
 
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function RegisterPage() {
+  const navigate = useNavigate();
   const [role, setRole] = useState("donor");
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
@@ -877,20 +879,11 @@ export default function RegisterPage() {
         location: form.city || form.address || null,
       });
       // API succeeded — navigate to confirmation
-      if (typeof window !== "undefined")
-        Router.push("/register/confirmation");
+      navigate("/register/confirmation");
     } catch (e) {
-      // Only block navigation for "email already registered" (409).
-      // Any other server/network error: log it, then navigate anyway
-      // so the preview always completes the flow.
-      if (e?.status === 409) {
-        setApiError(e.message ?? "Email already registered.");
-        setSubmitting(false);
-        return;
-      }
-      console.error("[Register] API error (navigating anyway):", e);
-      if (typeof window !== "undefined")
-        Router.push("/register/confirmation");
+      setApiError(e.message ?? "Registration failed. Please try again.");
+      setSubmitting(false);
+      return;
     }
     setSubmitting(false);
   };
@@ -898,7 +891,7 @@ export default function RegisterPage() {
   const handleBack = () => {
     setApiError(null);
     if (step > 1) setStep((s) => s - 1);
-    else if (typeof window !== "undefined") Router.push("/login");
+    else navigate("/login");
   };
 
   const ctaLabel = submitting

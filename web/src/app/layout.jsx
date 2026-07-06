@@ -20,13 +20,13 @@ export default function RootLayout({ children }) {
         {/*
          * lb-viewport — full viewport shell
          * • overflow-x: hidden stops horizontal shaking on mobile
-         * • background shifts slightly on desktop to frame the app column
+         * • background shifts slightly on desktop to frame the app surface
          */}
         <div className="lb-viewport">
           {/*
-           * lb-frame — the 480px app column
+           * lb-frame — the shared app surface
            * • mobile: w-full, rounded-none, no border/shadow
-           * • desktop (≥768px): centered, shadow-2xl, border-x
+           * • desktop (≥768px): centered, wider layout, shadow-2xl, border-x
            */}
           <div className="lb-frame">{children}</div>
         </div>
@@ -48,6 +48,7 @@ export default function RootLayout({ children }) {
 
           /* ── Viewport shell ───────────────────────────────── */
           .lb-viewport {
+            --lb-frame-max-width: 480px;
             min-height: 100vh;
             overflow-x: hidden;
             background-color: #F4F4F4;
@@ -57,7 +58,7 @@ export default function RootLayout({ children }) {
           /* ── App column — mobile default ──────────────────── */
           .lb-frame {
             width: 100%;
-            max-width: 480px;
+            max-width: var(--lb-frame-max-width);
             min-height: 100vh;
             margin-inline: auto;
             background-color: #F4F4F4;
@@ -72,6 +73,7 @@ export default function RootLayout({ children }) {
           /* ── Desktop frame — ≥768px breakpoint ────────────── */
           @media (min-width: 768px) {
             .lb-viewport {
+              --lb-frame-max-width: 1100px;
               background-color: #DCDCDC;
               /* Subtle inner vignette to push visual focus to center */
               background-image: radial-gradient(
