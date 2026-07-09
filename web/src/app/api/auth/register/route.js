@@ -6,6 +6,11 @@ import { saveBypassUser } from "../bypass-store";
 import { createSessionToken, hashPassword } from "@/app/api/utils/auth";
 import { createSupabaseServerClient, normalizeEmail } from "@/app/api/utils/supabase";
 
+const USER_SELECT =
+  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at, password_hash";
+const SAFE_USER_SELECT =
+  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at";
+
 function normalizeRole(role) {
   return ["donor", "requester", "hospital"].includes(role) ? role : null;
 }
@@ -34,7 +39,7 @@ export async function POST(request) {
 
     const normalizedEmail = normalizeEmail(email);
 
-    if (process.env.BYPASS_REGISTER_DB === "true") {
+    if (process.env.NODE_ENV !== "production" && process.env.BYPASS_REGISTER_DB === "true") {
       const mockUser = {
         id: `dev-${Date.now()}`,
         full_name: full_name.trim(),
@@ -45,6 +50,7 @@ export async function POST(request) {
         location: location ?? null,
         availability_status: 0,
         is_verified: 1,
+        reward_points: 0,
         created_at: new Date().toISOString(),
       };
       saveBypassUser(normalizedEmail, mockUser);
@@ -57,19 +63,49 @@ export async function POST(request) {
     const supabase = createSupabaseServerClient();
     const { data: existingRows, error: lookupError } = await supabase
       .from("users")
-      .select("id")
-      .eq("email", normalizedEmail)
+      .select(USER_SELECT)
+      .ilike("email", normalizedEmail)
       .limit(1);
 
     if (lookupError) {
       throw lookupError;
     }
 
-    if (existingRows?.length) {
+    const passwordHash = hashPassword(password);
+    const existingUser = existingRows?.[0];
+
+    if (existingUser?.password_hash) {
       return Response.json({ error: "Email already registered" }, { status: 409 });
     }
 
-    const passwordHash = hashPassword(password);
+    if (existingUser) {
+      const { data: completedUser, error: updateError } = await supabase
+        .from("users")
+        .update({
+          full_name: full_name.trim(),
+          phone: phone?.trim() ?? null,
+          role: normalizedRole,
+          blood_type: blood_type ?? null,
+          location: location ?? null,
+          password_hash: passwordHash,
+          availability_status: existingUser.availability_status ?? 0,
+          is_verified: existingUser.is_verified ?? 0,
+        })
+        .eq("id", existingUser.id)
+        .select(SAFE_USER_SELECT)
+        .single();
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      const token = createSessionToken(completedUser);
+      return Response.json(
+        { user: completedUser, token, message: "Registration completed" },
+        { status: 200 },
+      );
+    }
+
     const createdAt = new Date().toISOString();
 
     const { data: insertedRows, error: insertError } = await supabase
@@ -86,7 +122,7 @@ export async function POST(request) {
         is_verified: 0,
         created_at: createdAt,
       })
-      .select("id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, created_at")
+      .select(SAFE_USER_SELECT)
       .single();
 
     if (insertError) {

@@ -14,6 +14,37 @@ function minutesFromNow(n) {
   return new Date(Date.now() + n * 60_000).toISOString();
 }
 
+const DONATION_COOLDOWN_DAYS = 56;
+const MS_PER_DAY = 86_400_000;
+
+function cooldownDaysRemaining(lastDonationAt) {
+  if (!lastDonationAt) return 0;
+  const lastDonationTime = new Date(lastDonationAt).getTime();
+  if (!Number.isFinite(lastDonationTime)) return 0;
+  const daysSinceDonation = (Date.now() - lastDonationTime) / MS_PER_DAY;
+  return Math.max(0, Math.ceil(DONATION_COOLDOWN_DAYS - daysSinceDonation));
+}
+
+function donorIneligibilityReason(donor) {
+  if (!donor) return "Donor account not found";
+  if (!(donor.availability_status === 1 || donor.availability_status === true)) {
+    return "Donor is not currently available";
+  }
+  if (!(donor.is_verified === 1 || donor.is_verified === true)) {
+    return "Donor account is not verified";
+  }
+  if (donor.is_suspended === true) return "Donor account is suspended";
+  if (donor.is_inactive === true) return "Donor account is inactive";
+  if (donor.matching_opt_out === true) return "Donor has opted out of matching";
+
+  const remainingDays = cooldownDaysRemaining(donor.last_donation_at);
+  if (remainingDays > 0) {
+    return `Donor is in the 56-day cooldown period (${remainingDays} day${remainingDays === 1 ? "" : "s"} remaining)`;
+  }
+
+  return null;
+}
+
 export async function POST(request) {
   try {
     const auth = requireAuth(request, ["donor"]);
@@ -49,6 +80,21 @@ export async function POST(request) {
         { error: "Match already responded to" },
         { status: 409 },
       );
+    }
+
+    const { data: donor, error: donorError } = await supabase
+      .from("users")
+      .select(
+        "id, availability_status, is_verified, is_suspended, is_inactive, matching_opt_out, last_donation_at",
+      )
+      .eq("id", auth.user.sub)
+      .maybeSingle();
+
+    if (donorError) throw donorError;
+
+    const ineligibilityReason = donorIneligibilityReason(donor);
+    if (ineligibilityReason) {
+      return Response.json({ error: ineligibilityReason }, { status: 403 });
     }
 
     if (decision === "Declined") {
@@ -113,9 +159,9 @@ export async function POST(request) {
 
     const { data: updatedRequest, error: updateRequestError } = await supabase
       .from("blood_requests")
-      .update({ status: "donor_matched" })
+      .update({ status: "donor_matched", matching_status: "accepted" })
       .eq("id", match.request_id)
-      .select("id, status")
+      .select("id, status, matching_status")
       .single();
 
     if (updateRequestError) throw updateRequestError;
@@ -168,6 +214,11 @@ export async function POST(request) {
       expires_at: expiresAt,
       otp_ttl_seconds: getOtpTtlSeconds(),
       token_id: token?.id ?? null,
+      unlocked_routes: {
+        chat: `/matches/${match_id}/chat`,
+        tracking: `/matches/${match_id}/tracking`,
+        checkin: `/donor/match/${match_id}/checkin`,
+      },
       request: updatedRequest ?? null,
     });
   } catch (err) {

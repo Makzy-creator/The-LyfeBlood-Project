@@ -27,7 +27,7 @@ export async function GET(request) {
     if (role === "donor") {
       matchesQuery = matchesQuery
         .eq("donor_id", auth.user.sub)
-        .neq("match_status", "Declined");
+        .in("match_status", ["Alerted", "Accepted"]);
     } else if (role !== "admin") {
       let requestQuery = supabase.from("blood_requests").select("id");
       if (role === "hospital_staff") {

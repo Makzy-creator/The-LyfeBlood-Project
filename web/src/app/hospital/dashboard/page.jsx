@@ -10,6 +10,7 @@ import {
   Droplets,
   CheckCircle2,
   Building2,
+  MapPin,
   Radio,
   RefreshCw,
 } from "lucide-react";
@@ -21,7 +22,7 @@ import RequestStatusBadge from "@/components/ui/RequestStatusBadge";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from "@/context/AppContext";
-import { apiGetMatches, apiVerifyToken } from "@/utils/api";
+import { apiGetMatches, apiUpdateHospitalMatchStatus, apiVerifyToken } from "@/utils/api";
 
 // ─── NEW REQUEST MODAL SHEET ──────────────────────────────────────────────────
 function NewRequestSheet({ onClose, onSubmit, isSOS }) {
@@ -243,8 +244,8 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
             >
               Units Required <span style={{ color: "#C0392B" }}>*</span>
             </label>
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              {[1, 2, 3, 4, 5].map((n) => (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
                 <button
                   key={n}
                   type="button"
@@ -359,6 +360,7 @@ export default function HospitalDashboardPage() {
   const [checkInLoading, setCheckInLoading] = useState(false);
   const [checkInError, setCheckInError] = useState(null);
   const [checkInSuccess, setCheckInSuccess] = useState(null);
+  const [matchStatusLoading, setMatchStatusLoading] = useState(null);
   const [statusAction, setStatusAction] = useState({
     id: null,
     loading: false,
@@ -440,6 +442,37 @@ export default function HospitalDashboardPage() {
       setCheckInError(error?.message ?? "Unable to verify check-in");
     } finally {
       setCheckInLoading(false);
+    }
+  };
+
+  const handleHospitalMatchStatus = async (action) => {
+    setCheckInError(null);
+    setCheckInSuccess(null);
+
+    if (!checkInMatchId) {
+      setCheckInError("Select the donor match before updating hospital status.");
+      return;
+    }
+
+    setMatchStatusLoading(action);
+    try {
+      const response = await apiUpdateHospitalMatchStatus({
+        match_id: checkInMatchId,
+        action,
+      });
+      const nextStatus =
+        response.new_status === "fulfilled"
+          ? REQUEST_STATUS.FULFILLED
+          : response.new_status === "blood_collected"
+          ? REQUEST_STATUS.BLOOD_COLLECTED
+          : REQUEST_STATUS.CHECKED_IN;
+      updateRequestStatus(response.request.id, nextStatus, { persist: false });
+      setCheckInSuccess(response.message ?? "Hospital status updated.");
+      await loadAcceptedMatches();
+    } catch (error) {
+      setCheckInError(error?.message ?? "Unable to update hospital status");
+    } finally {
+      setMatchStatusLoading(null);
     }
   };
 
@@ -839,6 +872,48 @@ export default function HospitalDashboardPage() {
               </div>
             )}
 
+            {selectedMatch && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "8px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <SecondaryButton
+                  onClick={() => handleHospitalMatchStatus("arrived")}
+                  disabled={
+                    checkInLoading ||
+                    Boolean(matchStatusLoading) ||
+                    Boolean(selectedMatch.arrived_at)
+                  }
+                  icon={MapPin}
+                >
+                  {matchStatusLoading === "arrived" ? "Saving..." : "Mark Arrived"}
+                </SecondaryButton>
+                <PrimaryButton
+                  onClick={() => handleHospitalMatchStatus("blood_collected")}
+                  disabled={
+                    checkInLoading ||
+                    Boolean(matchStatusLoading) ||
+                    !selectedMatch.arrived_at ||
+                    Boolean(selectedMatch.blood_collected_at)
+                  }
+                  icon={Droplets}
+                >
+                  {matchStatusLoading === "blood_collected" ? "Saving..." : "Blood Collected"}
+                </PrimaryButton>
+                </div>
+                <PrimaryButton
+                  onClick={() => handleHospitalMatchStatus("donation_completed")}
+                  disabled={
+                    checkInLoading ||
+                    Boolean(matchStatusLoading) ||
+                    !selectedMatch.blood_collected_at ||
+                    Boolean(selectedMatch.donation_completed_at)
+                  }
+                  icon={CheckCircle2}
+                >
+                  {matchStatusLoading === "donation_completed" ? "Saving..." : "Donation Completed"}
+                </PrimaryButton>
+              </div>
+            )}
+
             <input
               value={checkInOtp}
               onChange={(event) => {
@@ -931,7 +1006,8 @@ export default function HospitalDashboardPage() {
               { status: REQUEST_STATUS.VERIFIED, label: "Verified" },
               { status: REQUEST_STATUS.DONOR_MATCHED, label: "Matched" },
               { status: REQUEST_STATUS.CHECKED_IN, label: "Checked In" },
-              { status: REQUEST_STATUS.FULFILLED, label: "Fulfilled" },
+              { status: REQUEST_STATUS.BLOOD_COLLECTED, label: "Collected" },
+              { status: REQUEST_STATUS.FULFILLED, label: "Completed" },
               { status: REQUEST_STATUS.CANCELLED, label: "Cancelled" },
             ].map(({ status, label }) => {
               const count = bloodRequests.filter(
@@ -1092,9 +1168,14 @@ export default function HospitalDashboardPage() {
                           from: REQUEST_STATUS.VERIFIED,
                         },
                         {
-                          label: "Fulfill",
-                          next: REQUEST_STATUS.FULFILLED,
+                          label: "Collected",
+                          next: REQUEST_STATUS.BLOOD_COLLECTED,
                           from: REQUEST_STATUS.CHECKED_IN,
+                        },
+                        {
+                          label: "Complete",
+                          next: REQUEST_STATUS.FULFILLED,
+                          from: REQUEST_STATUS.BLOOD_COLLECTED,
                         },
                         {
                           label: "Cancel",
@@ -1169,7 +1250,7 @@ export default function HospitalDashboardPage() {
                 margin: "0 0 10px",
               }}
             >
-              Fulfilled
+              Completed
             </h2>
             <div
               style={{

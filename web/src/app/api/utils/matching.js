@@ -40,18 +40,19 @@ function distanceKm(aLat, aLng, bLat, bLng) {
   return 2 * earthKm * Math.asin(Math.sqrt(h));
 }
 
-function matchLimitForUrgency(urgency) {
+function matchLimitForUrgency(urgency, overrideLimit) {
+  if (overrideLimit) return overrideLimit;
   if (urgency === "SOS") return 50;
   if (urgency === "Urgent") return 25;
   return 10;
 }
 
-export async function createMatchesForRequest(supabase, bloodRequest) {
+export async function createMatchesForRequest(supabase, bloodRequest, options = {}) {
   const requestLat = toNumber(bloodRequest?.latitude);
   const requestLng = toNumber(bloodRequest?.longitude);
   const compatibleTypes = COMPATIBLE_DONORS[bloodRequest?.blood_type_needed] ?? [];
 
-  if (!bloodRequest?.id || !compatibleTypes.length || requestLat === null || requestLng === null) {
+  if (!bloodRequest?.id || !compatibleTypes.length) {
     return { inserted: 0, skipped: true };
   }
 
@@ -76,19 +77,22 @@ export async function createMatchesForRequest(supabase, bloodRequest) {
     .filter((donor) => daysSince(donor.last_donation_at) >= DONATION_COOLDOWN_DAYS)
     .map((donor) => ({
       donor_id: donor.id,
-      distance_km: Number(
-        distanceKm(requestLat, requestLng, Number(donor.latitude), Number(donor.longitude)).toFixed(2),
-      ),
+      distance_km:
+        requestLat === null || requestLng === null
+          ? null
+          : Number(
+              distanceKm(requestLat, requestLng, Number(donor.latitude), Number(donor.longitude)).toFixed(2),
+            ),
     }))
-    .sort((a, b) => a.distance_km - b.distance_km)
-    .slice(0, matchLimitForUrgency(bloodRequest.urgency_tier))
+    .sort((a, b) => (a.distance_km ?? Infinity) - (b.distance_km ?? Infinity))
+    .slice(0, matchLimitForUrgency(bloodRequest.urgency_tier, options.limit))
     .map((donor, index) => ({
       request_id: bloodRequest.id,
       donor_id: donor.donor_id,
-      match_status: "Alerted",
+      match_status: options.status ?? "Candidate",
       distance_km: donor.distance_km,
       match_rank: index + 1,
-      notified_at: new Date().toISOString(),
+      notified_at: options.status === "Alerted" ? new Date().toISOString() : null,
     }));
 
   if (!rankedDonors.length) {
@@ -106,23 +110,27 @@ export async function createMatchesForRequest(supabase, bloodRequest) {
   if (insertError) throw insertError;
 
   const insertedMatches = matches ?? [];
-  await createNotifications(supabase, [
-    ...insertedMatches.map((match) => ({
-      user_id: match.donor_id,
-      type: "donor_matched",
-      title: "New donor match",
-      message: `${bloodRequest.blood_type_needed} needed at ${bloodRequest.hospital_name}.`,
-      request_id: bloodRequest.id,
-      match_id: match.id,
-    })),
-    ...requestRecipientIds(bloodRequest).map((userId) => ({
-      user_id: userId,
-      type: "donor_matched",
-      title: "Donors matched",
-      message: `${insertedMatches.length} donor match${insertedMatches.length === 1 ? "" : "es"} created for ${bloodRequest.blood_type_needed}.`,
-      request_id: bloodRequest.id,
-    })),
-  ]);
+  if (options.notify !== false) {
+    await createNotifications(supabase, [
+      ...insertedMatches.map((match) => ({
+        user_id: match.donor_id,
+        type: "donor_matched",
+        title: "New donor match",
+        message: `${bloodRequest.blood_type_needed} needed at ${bloodRequest.hospital_name}.`,
+        request_id: bloodRequest.id,
+        match_id: match.id,
+        deliver_at: options.deliver_at,
+      })),
+      ...requestRecipientIds(bloodRequest).map((userId) => ({
+        user_id: userId,
+        type: "donor_matched",
+        title: "Donors matched",
+        message: `${insertedMatches.length} donor match${insertedMatches.length === 1 ? "" : "es"} created for ${bloodRequest.blood_type_needed}.`,
+        request_id: bloodRequest.id,
+        deliver_at: options.deliver_at,
+      })),
+    ]);
+  }
 
   return { inserted: matches?.length ?? 0, skipped: false };
 }

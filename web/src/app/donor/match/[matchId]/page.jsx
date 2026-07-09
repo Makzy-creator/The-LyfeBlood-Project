@@ -9,12 +9,25 @@ import {
   X,
   CheckCircle2,
   Building2,
+  MessageCircle,
 } from "lucide-react";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
+import DonationJourney from "@/components/ui/DonationJourney";
 import { useApp } from "@/context/AppContext";
 import { apiGetMatch, apiRespondToMatch } from "@/utils/api";
+
+const DONATION_COOLDOWN_DAYS = 56;
+const MS_PER_DAY = 86_400_000;
+
+function getCooldownDaysRemaining(lastDonationAt) {
+  if (!lastDonationAt) return 0;
+  const lastDonationTime = new Date(lastDonationAt).getTime();
+  if (!Number.isFinite(lastDonationTime)) return 0;
+  const daysSinceDonation = (Date.now() - lastDonationTime) / MS_PER_DAY;
+  return Math.max(0, Math.ceil(DONATION_COOLDOWN_DAYS - daysSinceDonation));
+}
 
 // ─── MAP WIDGET PLACEHOLDER ───────────────────────────────────────────────────
 function MapWidget({ distanceKm, hospitalName }) {
@@ -277,7 +290,7 @@ function MapWidget({ distanceKm, hospitalName }) {
 // ─── MAIN PAGE ────────────────────────────────────────────────────────────────
 export default function MatchPage({ params }) {
   const { matchId } = params;
-  const { isAuthenticated, dismissMatchAlert } = useApp();
+  const { currentUser, isAuthenticated, dismissMatchAlert, refreshCurrentUser } = useApp();
   const [match, setMatch] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [responding, setResponding] = useState(false);
@@ -289,7 +302,12 @@ export default function MatchPage({ params }) {
     if (typeof window !== "undefined" && !isAuthenticated) {
       window.location.href = "/login";
     }
-  }, [isAuthenticated]);
+    if (isAuthenticated) {
+      refreshCurrentUser?.().catch((error) => {
+        console.error("[DonorMatch] Failed to refresh donor profile:", error);
+      });
+    }
+  }, [isAuthenticated, refreshCurrentUser]);
 
   useEffect(() => {
     if (!isAuthenticated || !matchId) return;
@@ -315,6 +333,8 @@ export default function MatchPage({ params }) {
           patientCode: request.patient_ref ?? null,
           tier: request.urgency_tier === "SOS" ? "sos" : "standard",
           status: match.match_status,
+          rawMatch: match,
+          rawRequest: request,
         });
         setLoadError(null);
       })
@@ -351,9 +371,13 @@ export default function MatchPage({ params }) {
           `lyfeblood.match.${matchId}.ttl_seconds`,
           String(response.otp_ttl_seconds ?? 900),
         );
+        window.sessionStorage.setItem(
+          `lyfeblood.match.${matchId}.unlocked_routes`,
+          JSON.stringify(response.unlocked_routes ?? {}),
+        );
       }
       if (typeof window !== "undefined") {
-        window.location.href = `/donor/match/${matchId}/checkin`;
+        window.location.href = `/matches/${matchId}/tracking`;
       }
     } catch (error) {
       setRespondError(error?.message ?? "Unable to accept this request");
@@ -364,11 +388,18 @@ export default function MatchPage({ params }) {
 
   const handleDecline = async () => {
     setDeclining(true);
-    await apiRespondToMatch({ match_id: matchId, decision: "Declined" });
-    setDeclined(true);
-    dismissMatchAlert();
-    await new Promise((r) => setTimeout(r, 800));
-    if (typeof window !== "undefined") window.location.href = "/donor/home";
+    setRespondError(null);
+    try {
+      await apiRespondToMatch({ match_id: matchId, decision: "Declined" });
+      setDeclined(true);
+      dismissMatchAlert();
+      await new Promise((r) => setTimeout(r, 800));
+      if (typeof window !== "undefined") window.location.href = "/donor/home";
+    } catch (error) {
+      setRespondError(error?.message ?? "Unable to decline this request");
+    } finally {
+      setDeclining(false);
+    }
   };
 
   if (declined) {
@@ -418,6 +449,11 @@ export default function MatchPage({ params }) {
       </div>
     );
   }
+
+  const cooldownDays = getCooldownDaysRemaining(
+    currentUser?.lastDonationAt ?? currentUser?.lastDonated,
+  );
+  const isCoolingDown = cooldownDays > 0;
 
   return (
     <>
@@ -689,6 +725,8 @@ export default function MatchPage({ params }) {
             </div>
           </div>
 
+          <DonationJourney request={match.rawRequest} match={match.rawMatch} />
+
           {/* What happens next */}
           <div
             style={{
@@ -718,10 +756,14 @@ export default function MatchPage({ params }) {
               },
               {
                 step: "2",
-                text: "Travel to the hospital and present the code to the Lab Manager.",
+                text: "Chat and route tracking are unlocked for the accepted match.",
               },
               {
                 step: "3",
+                text: "Travel to the hospital and present the code to the Lab Manager.",
+              },
+              {
+                step: "4",
                 text: "Clinical staff will handle all screening and procedures.",
               },
             ].map(({ step, text }) => (
@@ -775,13 +817,51 @@ export default function MatchPage({ params }) {
               paddingBottom: "32px",
             }}
           >
-            <PrimaryButton
-              onClick={handleAccept}
-              disabled={responding || declining || match.status !== "Alerted"}
-              icon={CheckCircle2}
-            >
-              {responding ? "Accepting..." : "Accept This Request"}
-            </PrimaryButton>
+            {match.status === "Accepted" && (
+              <>
+                <PrimaryButton
+                  onClick={() => {
+                    if (typeof window !== "undefined") window.location.href = `/matches/${matchId}/tracking`;
+                  }}
+                  icon={Navigation}
+                >
+                  Open Tracking
+                </PrimaryButton>
+                <SecondaryButton
+                  onClick={() => {
+                    if (typeof window !== "undefined") window.location.href = `/matches/${matchId}/chat`;
+                  }}
+                  icon={MessageCircle}
+                >
+                  Open Chat
+                </SecondaryButton>
+              </>
+            )}
+            {match.status === "Alerted" && (
+              <PrimaryButton
+                onClick={handleAccept}
+                disabled={responding || declining || isCoolingDown}
+                icon={CheckCircle2}
+              >
+                {responding ? "Accepting..." : "Accept This Request"}
+              </PrimaryButton>
+            )}
+            {match.status === "Alerted" && isCoolingDown && (
+              <p
+                style={{
+                  backgroundColor: "#FADBD8",
+                  borderRadius: "8px",
+                  color: "#922B21",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  margin: 0,
+                  padding: "10px 12px",
+                  textAlign: "center",
+                }}
+              >
+                Donation actions are disabled for {cooldownDays} more day{cooldownDays === 1 ? "" : "s"}.
+              </p>
+            )}
             {respondError && (
               <p
                 style={{
@@ -798,6 +878,8 @@ export default function MatchPage({ params }) {
                 {respondError}
               </p>
             )}
+            {match.status === "Alerted" && (
+              <>
             <SecondaryButton
               onClick={handleDecline}
               disabled={responding || declining || match.status !== "Alerted"}
@@ -817,6 +899,8 @@ export default function MatchPage({ params }) {
               Declining will pass this match to another available donor. Your
               availability status will remain on.
             </p>
+              </>
+            )}
           </div>
         </div>
       </div>

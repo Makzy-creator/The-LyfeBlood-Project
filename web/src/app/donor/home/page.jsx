@@ -36,6 +36,28 @@ function normalizeAssignedMatch(match) {
   };
 }
 
+const DONATION_COOLDOWN_DAYS = 56;
+const MS_PER_DAY = 86_400_000;
+
+function getCooldownDaysRemaining(lastDonationAt) {
+  if (!lastDonationAt) return 0;
+  const lastDonationTime = new Date(lastDonationAt).getTime();
+  if (!Number.isFinite(lastDonationTime)) return 0;
+  const daysSinceDonation = (Date.now() - lastDonationTime) / MS_PER_DAY;
+  return Math.max(0, Math.ceil(DONATION_COOLDOWN_DAYS - daysSinceDonation));
+}
+
+function formatDonationDate(lastDonationAt) {
+  if (!lastDonationAt) return "Never";
+  const date = new Date(lastDonationAt);
+  if (Number.isNaN(date.getTime())) return "Never";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export default function DonorHomePage() {
   const {
     currentUser,
@@ -45,6 +67,7 @@ export default function DonorHomePage() {
     incomingMatchAlert,
     dismissMatchAlert,
     markAllNotificationsRead,
+    refreshCurrentUser,
   } = useApp();
 
   // Auth guard
@@ -61,6 +84,9 @@ export default function DonorHomePage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    refreshCurrentUser?.().catch((error) => {
+      console.error("[DonorHome] Failed to refresh donor profile:", error);
+    });
     let alive = true;
     apiGetMatches()
       .then(({ matches }) => {
@@ -77,18 +103,26 @@ export default function DonorHomePage() {
     return () => {
       alive = false;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, refreshCurrentUser]);
 
   const handleToggle = async () => {
+    if (isCoolingDown) return;
     setToggling(true);
     await new Promise((r) => setTimeout(r, 250));
     toggleDonorAvailable();
     setToggling(false);
   };
 
+  const activeRequests = assignedMatches;
+  const realIncomingMatchAlert =
+    incomingMatchAlert &&
+    assignedMatches.some((assignedMatch) => assignedMatch.matchId === incomingMatchAlert.matchId)
+      ? incomingMatchAlert
+      : null;
+
   const handleAcceptMatch = () => {
-    if (typeof window !== "undefined") {
-      navigate(`/donor/match/${incomingMatchAlert.matchId}`);
+    if (typeof window !== "undefined" && realIncomingMatchAlert) {
+      navigate(`/donor/match/${realIncomingMatchAlert.matchId}`);
     }
   };
 
@@ -99,7 +133,12 @@ export default function DonorHomePage() {
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  const activeRequests = assignedMatches;
+  const lastDonationAt = currentUser.lastDonationAt ?? currentUser.lastDonated ?? null;
+  const lastDonationLabel = formatDonationDate(lastDonationAt);
+  const cooldownDays = getCooldownDaysRemaining(lastDonationAt);
+  const isCoolingDown = cooldownDays > 0;
+  const hasDonationHistory =
+    Boolean(lastDonationAt) || Number(currentUser.totalDonations ?? 0) > 0;
 
   return (
     <>
@@ -114,7 +153,7 @@ export default function DonorHomePage() {
         <TopAppBar title="LyfeBlood" onBellPress={markAllNotificationsRead} />
 
         {/* ── INCOMING MATCH ALERT BANNER ─────────────────────────────── */}
-        {incomingMatchAlert && (
+        {realIncomingMatchAlert && (
           <div
             style={{
               backgroundColor: "#FADBD8",
@@ -148,8 +187,8 @@ export default function DonorHomePage() {
                 🚨 Urgent Match Found
               </p>
               <p style={{ fontSize: "12px", color: "#922B21", margin: 0 }}>
-                {incomingMatchAlert.bloodGroup} needed at{" "}
-                {incomingMatchAlert.hospitalName}
+                {realIncomingMatchAlert.bloodGroup} needed at{" "}
+                {realIncomingMatchAlert.hospitalName}
               </p>
             </div>
             <button
@@ -260,7 +299,7 @@ export default function DonorHomePage() {
               {
                 icon: Clock,
                 label: "Last Donated",
-                value: currentUser.lastDonated ? "Feb 2025" : "Never",
+                value: lastDonationLabel,
               },
               { icon: MapPin, label: "Location", value: "Owerri N." },
             ].map(({ icon: Icon, label, value }) => (
@@ -336,7 +375,9 @@ export default function DonorHomePage() {
                 }}
               >
                 {donorAvailable
-                  ? "You are visible to hospitals & patients"
+                  ? isCoolingDown
+                    ? "Cooldown active. Donation actions are disabled"
+                    : "You are visible to hospitals & patients"
                   : "You are hidden from all requests"}
               </p>
             </div>
@@ -348,7 +389,7 @@ export default function DonorHomePage() {
                 flexShrink: 0,
               }}
             >
-              {donorAvailable && (
+              {donorAvailable && !isCoolingDown && (
                 <span
                   style={{
                     display: "inline-flex",
@@ -378,17 +419,17 @@ export default function DonorHomePage() {
               {/* Toggle switch */}
               <button
                 onClick={handleToggle}
-                disabled={toggling}
+                disabled={toggling || isCoolingDown}
                 aria-label="Toggle availability"
                 style={{
                   width: "52px",
                   height: "28px",
                   borderRadius: "14px",
-                  backgroundColor: donorAvailable
+                  backgroundColor: donorAvailable && !isCoolingDown
                     ? "#27AE60"
                     : "rgba(255,255,255,0.25)",
                   border: "none",
-                  cursor: "pointer",
+                  cursor: toggling || isCoolingDown ? "not-allowed" : "pointer",
                   position: "relative",
                   transition: "background-color 250ms",
                   outline: "none",
@@ -399,7 +440,7 @@ export default function DonorHomePage() {
                   style={{
                     position: "absolute",
                     top: "3px",
-                    left: donorAvailable ? "26px" : "3px",
+                    left: donorAvailable && !isCoolingDown ? "26px" : "3px",
                     width: "22px",
                     height: "22px",
                     borderRadius: "50%",
@@ -411,6 +452,44 @@ export default function DonorHomePage() {
               </button>
             </div>
           </div>
+
+          {hasDonationHistory && (
+            <div
+              style={{
+                marginTop: "10px",
+                backgroundColor:
+                  cooldownDays > 0
+                    ? "rgba(250, 219, 216, 0.18)"
+                    : "rgba(213, 245, 227, 0.16)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                borderRadius: "8px",
+                padding: "10px 12px",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "11px",
+                  fontWeight: "700",
+                  color: "#FFFFFF",
+                  margin: "0 0 2px",
+                }}
+              >
+                56-day donation cooldown
+              </p>
+              <p
+                style={{
+                  fontSize: "11px",
+                  color: "rgba(255,255,255,0.72)",
+                  margin: 0,
+                  lineHeight: "1.4",
+                }}
+              >
+                {cooldownDays > 0
+                  ? `${cooldownDays} day${cooldownDays === 1 ? "" : "s"} remaining before you can accept another donation.`
+                  : "Cooldown complete. You can accept assigned requests when available."}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* ── ACTIVE REQUESTS ────────────────────────────────────────── */}
@@ -510,11 +589,27 @@ export default function DonorHomePage() {
                 gap: "10px",
               }}
             >
+              {isCoolingDown && (
+                <p
+                  style={{
+                    margin: 0,
+                    borderRadius: "8px",
+                    backgroundColor: "#FADBD8",
+                    color: "#922B21",
+                    fontSize: "12px",
+                    fontWeight: "700",
+                    padding: "10px 12px",
+                  }}
+                >
+                  Donation actions are disabled until your cooldown ends.
+                </p>
+              )}
               {activeRequests.map((req) => (
                 <RequestCard
                   key={req.id}
                   request={req}
                   onClick={() => {
+                    if (isCoolingDown) return;
                     if (typeof window !== "undefined") {
                       navigate(`/donor/match/${req.matchId}`);
                     }
@@ -523,6 +618,65 @@ export default function DonorHomePage() {
               ))}
             </div>
           )}
+        </section>
+
+        <section style={{ padding: "16px 12px 0" }}>
+          <div
+            style={{
+              backgroundColor: "#FFFFFF",
+              borderRadius: "8px",
+              padding: "16px",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Award size={18} color="#C0392B" />
+                <div>
+                  <h2 style={{ fontSize: "15px", fontWeight: "800", color: "#1A1A1A", margin: 0 }}>
+                    Rewards
+                  </h2>
+                  <p style={{ fontSize: "12px", color: "#6B6B6B", margin: "2px 0 0" }}>
+                    Benefits marketplace coming soon
+                  </p>
+                </div>
+              </div>
+              <span
+                style={{
+                  backgroundColor: "#FADBD8",
+                  color: "#922B21",
+                  borderRadius: "999px",
+                  padding: "5px 10px",
+                  fontSize: "11px",
+                  fontWeight: "800",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Coming Soon
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+              <div style={{ backgroundColor: "#F8F8F8", borderRadius: "8px", padding: "12px" }}>
+                <p style={{ fontSize: "10px", fontWeight: "800", color: "#6B6B6B", margin: "0 0 4px", textTransform: "uppercase" }}>
+                  Points
+                </p>
+                <p style={{ fontSize: "22px", fontWeight: "800", color: "#1A1A1A", margin: 0 }}>
+                  {currentUser.rewardPoints ?? 0}
+                </p>
+              </div>
+              <div style={{ backgroundColor: "#F8F8F8", borderRadius: "8px", padding: "12px" }}>
+                <p style={{ fontSize: "10px", fontWeight: "800", color: "#6B6B6B", margin: "0 0 4px", textTransform: "uppercase" }}>
+                  History
+                </p>
+                <p style={{ fontSize: "12px", fontWeight: "700", color: "#4A4A4A", margin: 0, lineHeight: "1.4" }}>
+                  Reward history will appear after partner rewards launch.
+                </p>
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* ── QUICK LINKS ──────────────────────────────────────────────── */}

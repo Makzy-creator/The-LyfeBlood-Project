@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   ClipboardCheck,
   Flag,
+  MessageCircle,
+  Navigation,
   Phone,
   ShieldCheck,
 } from "lucide-react";
@@ -16,8 +18,9 @@ import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import RequestStatusBadge from "@/components/ui/RequestStatusBadge";
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
+import DonationJourney from "@/components/ui/DonationJourney";
 import { REQUEST_STATUS, useApp } from "@/context/AppContext";
-import { apiGetRequest } from "@/utils/api";
+import { apiGetMatches, apiGetRequest } from "@/utils/api";
 
 const ROLE_HOME_ROUTE = {
   donor: "/donor/home",
@@ -42,6 +45,9 @@ function normalizeRequestStatus(status) {
     case "Arrived At Lab":
     case REQUEST_STATUS.CHECKED_IN:
       return REQUEST_STATUS.CHECKED_IN;
+    case "Blood Collected":
+    case REQUEST_STATUS.BLOOD_COLLECTED:
+      return REQUEST_STATUS.BLOOD_COLLECTED;
     case "Completed":
     case REQUEST_STATUS.FULFILLED:
       return REQUEST_STATUS.FULFILLED;
@@ -68,6 +74,7 @@ function normalizeBloodRequest(r) {
     requestDate: r.created_at ?? r.requestDate ?? new Date().toISOString(),
     urgencyNote: r.urgency_note ?? r.urgencyNote ?? null,
     location: r.location ?? null,
+    matching_status: r.matching_status ?? r.matchingStatus ?? "pending",
   };
 }
 
@@ -127,6 +134,8 @@ export default function RequestDetailsPage() {
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [statusError, setStatusError] = useState(null);
   const [statusSuccess, setStatusSuccess] = useState(null);
+  const [requestMatches, setRequestMatches] = useState([]);
+  const [acceptedMatches, setAcceptedMatches] = useState([]);
 
   useEffect(() => {
     if (!isAuthenticated) navigate("/login");
@@ -141,13 +150,19 @@ export default function RequestDetailsPage() {
     setRequestError(null);
 
     apiGetRequest(requestId)
-      .then(({ request: loadedRequest }) => {
+      .then(async ({ request: loadedRequest }) => {
         if (!isActive) return;
         setRequest(normalizeBloodRequest(loadedRequest));
+        const { matches } = await apiGetMatches({ request_id: loadedRequest.id });
+        if (!isActive) return;
+        setRequestMatches(matches ?? []);
+        setAcceptedMatches((matches ?? []).filter((match) => match.match_status === "Accepted"));
       })
       .catch((error) => {
         if (!isActive) return;
         setRequest(null);
+        setRequestMatches([]);
+        setAcceptedMatches([]);
         if (error?.status === 404) {
           setRequestNotFound(true);
           return;
@@ -168,6 +183,7 @@ export default function RequestDetailsPage() {
   const role = currentUser.role;
   const homeRoute = ROLE_HOME_ROUTE[role] ?? "/dashboard";
   const isHospital = role === "hospital" || role === "hospital_officer";
+  const isPatient = ["requester", "patient", "patient_family"].includes(role);
 
   if (requestLoading) {
     return (
@@ -269,7 +285,11 @@ export default function RequestDetailsPage() {
           next: REQUEST_STATUS.DONOR_MATCHED,
         },
         request.status === REQUEST_STATUS.CHECKED_IN && {
-          label: "Mark Fulfilled",
+          label: "Mark Blood Collected",
+          next: REQUEST_STATUS.BLOOD_COLLECTED,
+        },
+        request.status === REQUEST_STATUS.BLOOD_COLLECTED && {
+          label: "Mark Completed",
           next: REQUEST_STATUS.FULFILLED,
         },
         ![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(request.status) && {
@@ -332,6 +352,8 @@ export default function RequestDetailsPage() {
             )}
           </Section>
 
+          <DonationJourney request={request} matches={requestMatches} />
+
           <Section title="Verification & Status" icon={ShieldCheck}>
             <DetailRow label="Current status" value={request.status.replaceAll("_", " ")} />
             <p style={{ margin: 0, fontSize: "12px", color: "#4A4A4A", lineHeight: "1.5" }}>
@@ -368,6 +390,37 @@ export default function RequestDetailsPage() {
               ),
             )}
           </Section>
+
+          {isPatient && acceptedMatches.length > 0 && (
+            <Section title="Donor Coordination" icon={Navigation}>
+              <p style={{ margin: 0, fontSize: "12px", color: "#4A4A4A", lineHeight: "1.5" }}>
+                Chat and live tracking are available because a matched donor accepted this request.
+              </p>
+              {acceptedMatches.map((match) => (
+                <div
+                  key={match.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "8px",
+                  }}
+                >
+                  <SecondaryButton
+                    onClick={() => navigate(`/matches/${match.id}/chat`)}
+                    icon={MessageCircle}
+                  >
+                    Chat
+                  </SecondaryButton>
+                  <PrimaryButton
+                    onClick={() => navigate(`/matches/${match.id}/tracking`)}
+                    icon={Navigation}
+                  >
+                    Track Donor
+                  </PrimaryButton>
+                </div>
+              ))}
+            </Section>
+          )}
 
           <Section title="Emergency Contact" icon={Phone}>
             <DetailRow label="Facility" value={request.hospitalName} />

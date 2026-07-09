@@ -1,6 +1,3 @@
-import * as helpers from './helpers';
-
 export default function Page() {
-  const Widget = helpers.DoesNotExist;
-  return <div>{Widget()}</div>;
+  return <div>Missing component test page disabled in production build.</div>;
 }

@@ -8,11 +8,14 @@ import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 import { createNotifications, requestRecipientIds } from "@/app/api/utils/notifications";
 
+const DONATION_REWARD_POINTS = 100;
+
 const VALID_STATUSES = [
   "pending",
   "verified",
   "donor_matched",
   "checked_in",
+  "blood_collected",
   "fulfilled",
   "cancelled",
 ];
@@ -23,6 +26,7 @@ const STATUS_ALIASES = {
   "Donor Matched": "donor_matched",
   Arrived: "checked_in",
   "Arrived At Lab": "checked_in",
+  "Blood Collected": "blood_collected",
   Completed: "fulfilled",
   Cancelled: "cancelled",
 };
@@ -58,7 +62,7 @@ export async function GET(request) {
     let query = supabase
       .from("blood_requests")
       .select("*")
-      .not("status", "in", "(fulfilled,cancelled)")
+      .neq("status", "cancelled")
       .order("created_at", { ascending: false });
 
     const role = getCanonicalRole(auth.user.role);
@@ -113,7 +117,7 @@ export async function PATCH(request) {
     }
     if (!VALID_STATUSES.includes(requestedStatus)) {
       return Response.json(
-        { error: "status must be pending, verified, donor_matched, checked_in, fulfilled, or cancelled" },
+        { error: "status must be pending, verified, donor_matched, checked_in, blood_collected, fulfilled, or cancelled" },
         { status: 400 },
       );
     }
@@ -135,9 +139,68 @@ export async function PATCH(request) {
       return Response.json({ error: "Request not found" }, { status: 404 });
     }
 
+    if (requestedStatus === "fulfilled") {
+      const { data: collectedMatches, error: collectedMatchesError } = await supabase
+        .from("matches")
+        .select("id, donor_id, donation_completed_at")
+        .eq("request_id", request_id)
+        .eq("match_status", "Accepted")
+        .not("blood_collected_at", "is", null);
+
+      if (collectedMatchesError) throw collectedMatchesError;
+      if (!collectedMatches?.length) {
+        return Response.json(
+          { error: "Blood collection must be recorded before completing donation" },
+          { status: 409 },
+        );
+      }
+
+      const completedAt = new Date().toISOString();
+      const newlyCompletedMatches = collectedMatches.filter(
+        (match) => !match.donation_completed_at,
+      );
+
+      if (newlyCompletedMatches.length) {
+        const { error: completeMatchesError } = await supabase
+          .from("matches")
+          .update({ donation_completed_at: completedAt })
+          .in("id", newlyCompletedMatches.map((match) => match.id));
+
+        if (completeMatchesError) throw completeMatchesError;
+      }
+
+      const donorIds = [...new Set(newlyCompletedMatches.map((match) => match.donor_id).filter(Boolean))];
+      if (donorIds.length) {
+        const { data: donors, error: donorLookupError } = await supabase
+          .from("users")
+          .select("id, reward_points")
+          .in("id", donorIds);
+
+        if (donorLookupError) throw donorLookupError;
+
+        await Promise.all(
+          (donors ?? []).map(async (donor) => {
+            const { error: donorCooldownError } = await supabase
+              .from("users")
+              .update({
+                last_donation_at: completedAt,
+                availability_status: 0,
+                reward_points: Number(donor.reward_points ?? 0) + DONATION_REWARD_POINTS,
+              })
+              .eq("id", donor.id);
+
+            if (donorCooldownError) throw donorCooldownError;
+          }),
+        );
+      }
+    }
+
     const { data: updatedRequest, error: updateError } = await supabase
       .from("blood_requests")
-      .update({ status: requestedStatus })
+      .update({
+        status: requestedStatus,
+        ...(requestedStatus === "fulfilled" ? { matching_status: "completed" } : {}),
+      })
       .eq("id", request_id)
       .select("*")
       .single();

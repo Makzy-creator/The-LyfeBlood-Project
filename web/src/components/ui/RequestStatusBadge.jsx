@@ -31,8 +31,14 @@ const STATUS_CONFIG = {
     color: "#5B21B6",
     dot: "#7C3AED",
   },
+  [REQUEST_STATUS.BLOOD_COLLECTED]: {
+    label: "Blood Collected",
+    bg: "#FADBD8",
+    color: "#922B21",
+    dot: "#C0392B",
+  },
   [REQUEST_STATUS.FULFILLED]: {
-    label: "Fulfilled",
+    label: "Completed",
     bg: "#D5F5E3",
     color: "#1E8449",
     dot: "#27AE60",

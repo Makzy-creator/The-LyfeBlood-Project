@@ -15,6 +15,7 @@ export async function GET(request) {
       .from("notifications")
       .select("*")
       .eq("user_id", auth.user.sub)
+      .lte("deliver_at", new Date().toISOString())
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -29,6 +30,7 @@ export async function GET(request) {
           .from("notifications")
           .select("id", { count: "exact", head: true })
           .eq("user_id", auth.user.sub)
+          .lte("deliver_at", new Date().toISOString())
           .is("read_at", null),
       ]);
 

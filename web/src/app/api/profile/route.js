@@ -6,6 +6,33 @@ function normalizeRole(role) {
   return ["donor", "requester", "hospital"].includes(role) ? role : null;
 }
 
+const SAFE_USER_SELECT =
+  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at";
+
+export async function GET(request) {
+  try {
+    const auth = requireAuth(request);
+    if (auth.error) return auth.error;
+
+    const supabase = createSupabaseServerClient();
+    const { data: user, error } = await supabase
+      .from("users")
+      .select(SAFE_USER_SELECT)
+      .eq("id", auth.user.sub)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!user) {
+      return Response.json({ error: "User not found" }, { status: 404 });
+    }
+
+    return Response.json({ user });
+  } catch (err) {
+    console.error("[GET /api/profile]", err);
+    return Response.json({ error: "Failed to load profile" }, { status: 500 });
+  }
+}
+
 export async function PATCH(request) {
   try {
     const auth = requireAuth(request);
@@ -65,7 +92,7 @@ export async function PATCH(request) {
       availability_status: availability_status ? 1 : 0,
     };
 
-    if (process.env.BYPASS_REGISTER_DB === "true") {
+    if (process.env.NODE_ENV !== "production" && process.env.BYPASS_REGISTER_DB === "true") {
       const normalizedEmail = normalizeEmail(email);
       if (!normalizedEmail) {
         return Response.json({ error: "email is required" }, { status: 400 });
@@ -74,6 +101,7 @@ export async function PATCH(request) {
         ...payload,
         email: normalizedEmail,
         is_verified: 1,
+        reward_points: 0,
         created_at: new Date().toISOString(),
       };
       saveBypassUser(normalizedEmail, user);
@@ -92,7 +120,7 @@ export async function PATCH(request) {
         availability_status: payload.availability_status,
       })
       .eq("id", id)
-      .select("id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, created_at")
+      .select(SAFE_USER_SELECT)
       .single();
 
     if (error) {

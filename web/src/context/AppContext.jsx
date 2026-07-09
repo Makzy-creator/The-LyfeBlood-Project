@@ -3,47 +3,13 @@ import { createContext, useContext, useState, useCallback, useEffect } from "rea
 import {
   apiCreateRequest,
   apiGetNotifications,
+  apiGetProfile,
   apiGetRequests,
   apiUpdateNotifications,
   apiUpdateRequestStatus,
 } from "@/utils/api";
 
 // ─── PERSONA DEFINITIONS ─────────────────────────────────────────────────────
-export const PERSONAS = {
-  donor: {
-    id: "donor-001",
-    role: "donor",
-    roleLabel: "Blood Donor",             
-    name: "Emmanuel Okafor",
-    bloodGroup: "O+",
-    avatar: "EO",
-    location: "Owerri North, Imo State",
-    lastDonated: "2025-02-14",
-    totalDonations: 7,
-    isAvailable: true,
-  },
-  patient_family: {
-    id: "patient-fam-001",
-    role: "patient_family",
-    roleLabel: "Patient Family",
-    name: "Chioma Eze",
-    avatar: "CE",
-    location: "Owerri West, Imo State",
-    patientName: "Mr. Vincent Eze",
-    bloodGroupNeeded: "A-",
-  },
-  hospital_officer: {
-    id: "hospital-001",
-    role: "hospital_officer",
-    roleLabel: "Hospital Officer",
-    name: "Dr. Adaeze Nwosu",
-    avatar: "AN",
-    hospital: "Federal Medical Centre Owerri",
-    department: "Blood Bank & Procurement",
-    location: "Owerri Municipal, Imo State",
-  },
-};
-
 // ─── BLOOD GROUPS ─────────────────────────────────────────────────────────────
 export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
 
@@ -53,6 +19,7 @@ export const REQUEST_STATUS = {
   VERIFIED: "verified",
   DONOR_MATCHED: "donor_matched",
   CHECKED_IN: "checked_in",
+  BLOOD_COLLECTED: "blood_collected",
   FULFILLED: "fulfilled",
   CANCELLED: "cancelled",
 };
@@ -108,6 +75,9 @@ function normalizeDbUser(u) {
     bloodGroup: u.blood_type ?? u.bloodGroup ?? null,
     location: u.location ?? null,
     isAvailable: u.availability_status === 1 || u.availability_status === true,
+    lastDonationAt: u.last_donation_at ?? u.lastDonationAt ?? u.lastDonated ?? null,
+    lastDonated: u.last_donation_at ?? u.lastDonationAt ?? u.lastDonated ?? null,
+    rewardPoints: Number(u.reward_points ?? u.rewardPoints ?? 0),
     email: u.email ?? null,
     phone: u.phone ?? null,
   };
@@ -128,6 +98,9 @@ function normalizeRequestStatus(status) {
     case "Arrived At Lab":
     case REQUEST_STATUS.CHECKED_IN:
       return REQUEST_STATUS.CHECKED_IN;
+    case "Blood Collected":
+    case REQUEST_STATUS.BLOOD_COLLECTED:
+      return REQUEST_STATUS.BLOOD_COLLECTED;
     case "Completed":
     case REQUEST_STATUS.FULFILLED:
       return REQUEST_STATUS.FULFILLED;
@@ -154,6 +127,9 @@ function normalizeBloodRequest(r) {
     requestDate: r.created_at ?? r.requestDate ?? new Date().toISOString(),
     urgencyNote: r.urgency_note ?? r.urgencyNote ?? null,
     location: r.location ?? null,
+    requestType: r.request_type ?? r.requestType ?? "Emergency",
+    scheduledFor: r.scheduled_for ?? r.scheduledFor ?? null,
+    matchingStatus: r.matching_status ?? r.matchingStatus ?? "pending",
   };
 }
 
@@ -201,11 +177,15 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setBloodRequests([]);
+      return;
+    }
     refreshBloodRequests().catch((error) => {
       console.error("[AppContext] Failed to load blood requests:", error);
       setBloodRequests([]);
     });
-  }, [refreshBloodRequests]);
+  }, [isAuthenticated, refreshBloodRequests]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -216,42 +196,20 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     });
   }, [isAuthenticated, refreshNotifications]);
 
-  const login = useCallback((personaKeyOrUser) => {
-    // Accept a real DB user object (from /api/auth/login response)
-    if (personaKeyOrUser && typeof personaKeyOrUser === "object") {
-      const authUser = personaKeyOrUser.user ?? personaKeyOrUser;
-      const token = personaKeyOrUser.token ?? null;
-      const user = normalizeDbUser(authUser);
-      setCurrentUser(user);
-      setIsAuthenticated(true);
-      setBloodRequests([]); 
-      setNotifications([]);
-      setUnreadCount(0);
-      setDonorAvailable(user.isAvailable);
-      if (canUseStorage()) {
-        window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-        if (token) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-      }
-      refreshBloodRequests().catch((error) => {
-        console.error("[AppContext] Failed to refresh blood requests after login:", error);
-      });
-      refreshNotifications().catch((error) => {
-        console.error("[AppContext] Failed to refresh notifications after login:", error);
-      });
-      return;
-    }
-    // Legacy: accept a persona key string (keeps existing mock flows working)
-    const persona = PERSONAS[personaKeyOrUser];
-    if (!persona) return;
-    setCurrentUser(persona);
+  const login = useCallback((authPayload) => {
+    if (!authPayload || typeof authPayload !== "object") return;
+    const authUser = authPayload.user ?? authPayload;
+    const token = authPayload.token ?? null;
+    const user = normalizeDbUser(authUser);
+    setCurrentUser(user);
     setIsAuthenticated(true);
     setBloodRequests([]);
     setNotifications([]);
     setUnreadCount(0);
-    setDonorAvailable(persona.isAvailable ?? true);
+    setDonorAvailable(user.isAvailable);
     if (canUseStorage()) {
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(persona));
-      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+      if (token) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
     }
     refreshBloodRequests().catch((error) => {
       console.error("[AppContext] Failed to refresh blood requests after login:", error);
@@ -283,6 +241,12 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     }
   }, []);
 
+  const refreshCurrentUser = useCallback(async () => {
+    const { user } = await apiGetProfile();
+    updateCurrentUser(user);
+    return user;
+  }, [updateCurrentUser]);
+
   const toggleDonorAvailable = useCallback(() => {
     setDonorAvailable((v) => !v);
   }, []);
@@ -301,6 +265,7 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
       [REQUEST_STATUS.VERIFIED]: "verified",
       [REQUEST_STATUS.DONOR_MATCHED]: "donor_matched",
       [REQUEST_STATUS.CHECKED_IN]: "checked_in",
+      [REQUEST_STATUS.BLOOD_COLLECTED]: "blood_collected",
       [REQUEST_STATUS.FULFILLED]: "fulfilled",
       [REQUEST_STATUS.CANCELLED]: "cancelled",
     };
@@ -330,11 +295,15 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
       location: newRequest.location ?? null,
       urgency_note: newRequest.urgencyNote ?? null,
       requested_by: newRequest.requestedBy ?? null,
+      request_type: newRequest.requestType ?? "Emergency",
+      scheduled_for: newRequest.scheduledFor ?? null,
     });
-    setBloodRequests((prev) => [normalizeBloodRequest(request), ...prev]);
+    const normalizedRequest = normalizeBloodRequest(request);
+    setBloodRequests((prev) => [normalizedRequest, ...prev]);
     refreshNotifications().catch((error) => {
       console.error("[AppContext] Failed to refresh notifications after request create:", error);
     });
+    return { request: normalizedRequest };
   }, [refreshNotifications]);
 
   const markAllNotificationsRead = useCallback(async () => {
@@ -363,6 +332,7 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
       value={{
         currentUser,
         updateCurrentUser,
+        refreshCurrentUser,
         isAuthenticated,
         login,
         logout,

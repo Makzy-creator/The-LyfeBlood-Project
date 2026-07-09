@@ -16,6 +16,7 @@ export async function createNotifications(supabase, notifications) {
       message: notification.message,
       request_id: notification.request_id ?? null,
       match_id: notification.match_id ?? null,
+      deliver_at: notification.deliver_at ?? new Date().toISOString(),
     }));
 
   if (!rows.length) return { count: 0 };

@@ -5,7 +5,7 @@ export async function GET(request) {
   const auth = requireAuth(request, ["admin"]);
   if (auth.error) return auth.error;
 
-  if (process.env.BYPASS_REGISTER_DB !== "true")
+  if (process.env.NODE_ENV === "production" || process.env.BYPASS_REGISTER_DB !== "true")
     return Response.json({ error: "Not allowed" }, { status: 403 });
 
   try {
@@ -25,6 +25,7 @@ export async function GET(request) {
       location: null,
       availability_status: 0,
       is_verified: 1,
+      reward_points: 0,
       created_at: new Date().toISOString(),
     };
     saveBypassUser(normalizedEmail, mockUser);

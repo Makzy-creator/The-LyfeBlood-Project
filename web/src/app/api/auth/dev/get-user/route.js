@@ -5,7 +5,7 @@ export async function GET(request) {
   const auth = requireAuth(request, ["admin"]);
   if (auth.error) return auth.error;
 
-  if (process.env.BYPASS_REGISTER_DB !== "true")
+  if (process.env.NODE_ENV === "production" || process.env.BYPASS_REGISTER_DB !== "true")
     return Response.json({ error: "Not allowed" }, { status: 403 });
 
   try {

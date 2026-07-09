@@ -151,6 +151,14 @@ export async function POST(request) {
 
     if (requestUpdateError) throw requestUpdateError;
 
+    const { error: matchArrivalError } = await supabase
+      .from("matches")
+      .update({ arrived_at: checkedInAt })
+      .eq("id", match.id)
+      .is("arrived_at", null);
+
+    if (matchArrivalError) throw matchArrivalError;
+
     await createNotifications(supabase, [
       {
         user_id: donor.id,

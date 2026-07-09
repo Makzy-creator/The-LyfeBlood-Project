@@ -8,6 +8,7 @@ import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from "@/context/AppContext";
+import { apiGetMatches, apiSendMatches } from "@/utils/api";
 import {
   Droplets,
   LogOut,
@@ -57,8 +58,9 @@ function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
     bloodGroup: "",
     unitsNeeded: 1,
     patientCode: "",
-    location: "",
     urgencyNote: "",
+    requestType: "Emergency",
+    scheduledFor: "",
   });
   const [errors, setErrors] = useState({});
 
@@ -88,6 +90,17 @@ function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
     if (!Number(form.unitsNeeded) || Number(form.unitsNeeded) < 1) {
       nextErrors.unitsNeeded = "Units must be at least 1.";
     }
+    if (Number(form.unitsNeeded) > 5) {
+      nextErrors.unitsNeeded = "Patient requests cannot exceed 5 pints.";
+    }
+    if (form.requestType === "Scheduled") {
+      const scheduledTime = new Date(form.scheduledFor).getTime();
+      if (!form.scheduledFor || !Number.isFinite(scheduledTime)) {
+        nextErrors.scheduledFor = "Select a scheduled donation date.";
+      } else if (scheduledTime <= Date.now()) {
+        nextErrors.scheduledFor = "Scheduled date must be in the future.";
+      }
+    }
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
@@ -98,10 +111,14 @@ function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
     onSubmit({
       ...form,
       hospitalName: form.hospitalName.trim(),
-      location: form.location.trim(),
       patientCode: form.patientCode.trim(),
       urgencyNote: form.urgencyNote.trim(),
       unitsNeeded: Number(form.unitsNeeded),
+      requestType: form.requestType,
+      scheduledFor:
+        form.requestType === "Scheduled"
+          ? new Date(form.scheduledFor).toISOString()
+          : null,
     });
   };
 
@@ -184,6 +201,54 @@ function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
           </p>
         )}
 
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+            Request Type <span style={{ color: "#C0392B" }}>*</span>
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            {["Emergency", "Scheduled"].map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => updateField("requestType", type)}
+                disabled={isSubmitting}
+                style={{
+                  minHeight: "42px",
+                  borderRadius: "8px",
+                  border: `1.5px solid ${form.requestType === type ? "#C0392B" : "#C8C8C8"}`,
+                  backgroundColor: form.requestType === type ? "#FADBD8" : "#FFFFFF",
+                  color: form.requestType === type ? "#922B21" : "#1A1A1A",
+                  fontSize: "13px",
+                  fontWeight: "800",
+                  cursor: isSubmitting ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {form.requestType === "Scheduled" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
+              Scheduled Date <span style={{ color: "#C0392B" }}>*</span>
+            </label>
+            <input
+              style={inputStyle}
+              type="date"
+              value={form.scheduledFor}
+              min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
+              onChange={(event) => updateField("scheduledFor", event.target.value)}
+              disabled={isSubmitting}
+            />
+            {errors.scheduledFor && (
+              <span style={{ fontSize: "12px", color: "#922B21" }}>{errors.scheduledFor}</span>
+            )}
+          </div>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
             Hospital / Facility <span style={{ color: "#C0392B" }}>*</span>
@@ -237,7 +302,7 @@ function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
             style={inputStyle}
             type="number"
             min="1"
-            max="20"
+            max="5"
             value={form.unitsNeeded}
             onChange={(event) => updateField("unitsNeeded", event.target.value)}
             disabled={isSubmitting}
@@ -255,19 +320,6 @@ function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
             style={inputStyle}
             value={form.patientCode}
             onChange={(event) => updateField("patientCode", event.target.value)}
-            placeholder="Optional"
-            disabled={isSubmitting}
-          />
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          <label style={{ fontSize: "13px", fontWeight: "700", color: "#1A1A1A" }}>
-            Location
-          </label>
-          <input
-            style={inputStyle}
-            value={form.location}
-            onChange={(event) => updateField("location", event.target.value)}
             placeholder="Optional"
             disabled={isSubmitting}
           />
@@ -312,6 +364,15 @@ export default function DashboardPage() {
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
   const [requestSuccess, setRequestSuccess] = useState("");
+  const [matchingState, setMatchingState] = useState({
+    loading: false,
+    request: null,
+    matches: [],
+    selectedIds: [],
+    error: "",
+    sent: false,
+    sending: false,
+  });
 
   useEffect(() => {
     if (typeof window !== "undefined" && !isAuthenticated) {
@@ -323,6 +384,15 @@ export default function DashboardPage() {
     if (!["patient_family", "requester"].includes(currentUser?.role)) return;
     setRequestError("");
     setRequestSuccess("");
+    setMatchingState({
+      loading: false,
+      request: null,
+      matches: [],
+      selectedIds: [],
+      error: "",
+      sent: false,
+      sending: false,
+    });
     setShowRequestForm(true);
   };
 
@@ -330,7 +400,7 @@ export default function DashboardPage() {
     setRequestSubmitting(true);
     setRequestError("");
     try {
-      await addRequest({
+      const { request } = await addRequest({
         tier: "standard",
         bloodGroup: formData.bloodGroup,
         unitsNeeded: formData.unitsNeeded,
@@ -338,14 +408,88 @@ export default function DashboardPage() {
         patientCode: formData.patientCode,
         requestedBy: currentUser.email ? currentUser.id : null,
         urgencyNote: formData.urgencyNote,
-        location: formData.location || currentUser.location,
+        requestType: formData.requestType,
+        scheduledFor: formData.scheduledFor,
       });
-      setRequestSuccess("Request created and added to the live feed.");
       setShowRequestForm(false);
+      setMatchingState({
+        loading: true,
+        request,
+        matches: [],
+        selectedIds: [],
+        error: "",
+        sent: false,
+        sending: false,
+      });
+      window.setTimeout(async () => {
+        try {
+          const { matches } = await apiGetMatches({ request_id: request.id });
+          const candidates = (matches ?? [])
+            .filter((match) => match.match_status === "Candidate")
+            .slice(0, 4);
+          setMatchingState((current) => ({
+            ...current,
+            loading: false,
+            matches: candidates,
+            selectedIds: candidates.map((match) => match.id),
+            error: candidates.length ? "" : "No eligible donors found yet.",
+          }));
+        } catch (error) {
+          setMatchingState((current) => ({
+            ...current,
+            loading: false,
+            error: error?.message ?? "Unable to load eligible donors.",
+          }));
+        }
+      }, 6500);
     } catch (error) {
       setRequestError(error?.message ?? "Failed to create request.");
     } finally {
       setRequestSubmitting(false);
+    }
+  };
+
+  const toggleSelectedMatch = (matchId) => {
+    setMatchingState((current) => {
+      const selected = new Set(current.selectedIds);
+      if (selected.has(matchId)) selected.delete(matchId);
+      else if (selected.size < 4) selected.add(matchId);
+      return { ...current, selectedIds: [...selected], error: "" };
+    });
+  };
+
+  const handleSendSelectedDonors = async () => {
+    if (!matchingState.request?.id || !matchingState.selectedIds.length) {
+      setMatchingState((current) => ({
+        ...current,
+        error: "Select at least one donor.",
+      }));
+      return;
+    }
+
+    setMatchingState((current) => ({ ...current, sending: true, error: "" }));
+    try {
+      await apiSendMatches({
+        request_id: matchingState.request.id,
+        match_ids: matchingState.selectedIds,
+      });
+      setRequestSuccess("Request sent to selected donors.");
+      setMatchingState((current) => ({
+        ...current,
+        sending: false,
+        sent: true,
+        matches: current.matches.map((match) =>
+          current.selectedIds.includes(match.id)
+            ? { ...match, match_status: "Alerted" }
+            : match,
+        ),
+      }));
+    } catch (error) {
+      setMatchingState((current) => ({
+        ...current,
+        sending: false,
+        error: error?.message ?? "Unable to send donor requests.",
+      }));
     }
   };
 
@@ -549,6 +693,140 @@ export default function DashboardPage() {
         )}
 
         {/* ── NOTIFICATIONS BANNER ───────────────────────────────────── */}
+        {(matchingState.loading || matchingState.request) && (
+          <section
+            style={{
+              margin: "12px 12px 0",
+              backgroundColor: "#FFFFFF",
+              borderRadius: "10px",
+              padding: "14px",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+            }}
+          >
+            <div>
+              <h2 style={{ margin: "0 0 3px", fontSize: "15px", fontWeight: "800", color: "#1A1A1A" }}>
+                Eligible Donors
+              </h2>
+              <p style={{ margin: 0, fontSize: "12px", color: "#6B6B6B", lineHeight: "1.5" }}>
+                {matchingState.loading
+                  ? "Searching compatible verified donors nearby..."
+                  : "Select up to 4 donors to notify."}
+              </p>
+            </div>
+
+            {matchingState.loading && (
+              <div
+                style={{
+                  minHeight: "92px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "10px",
+                  backgroundColor: "#F4F4F4",
+                  borderRadius: "8px",
+                }}
+              >
+                <span
+                  style={{
+                    width: "28px",
+                    height: "28px",
+                    borderRadius: "50%",
+                    border: "3px solid #FADBD8",
+                    borderTopColor: "#C0392B",
+                    animation: "spin 900ms linear infinite",
+                  }}
+                />
+                <span style={{ fontSize: "12px", color: "#922B21", fontWeight: "800" }}>
+                  Matching donors
+                </span>
+              </div>
+            )}
+
+            {!matchingState.loading && matchingState.matches.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {matchingState.matches.map((match) => {
+                  const checked = matchingState.selectedIds.includes(match.id);
+                  return (
+                    <label
+                      key={match.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "auto 1fr auto",
+                        gap: "10px",
+                        alignItems: "center",
+                        border: `1.5px solid ${checked ? "#C0392B" : "#E0E0E0"}`,
+                        borderRadius: "8px",
+                        padding: "10px",
+                        cursor: matchingState.sent ? "default" : "pointer",
+                        backgroundColor: checked ? "#FADBD8" : "#FFFFFF",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={matchingState.sent}
+                        onChange={() => toggleSelectedMatch(match.id)}
+                        style={{ width: "18px", height: "18px", accentColor: "#C0392B" }}
+                      />
+                      <div>
+                        <p style={{ margin: "0 0 2px", fontSize: "13px", fontWeight: "800", color: "#1A1A1A" }}>
+                          {match.donor?.full_name ?? "Eligible donor"}
+                        </p>
+                        <p style={{ margin: 0, fontSize: "11px", color: "#6B6B6B" }}>
+                          {match.donor?.blood_type ?? "Blood type"} donor
+                          {match.distance_km != null ? ` · ${match.distance_km} km away` : ""}
+                        </p>
+                      </div>
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#922B21" }}>
+                        #{match.match_rank ?? "-"}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {matchingState.error && (
+              <p
+                role="alert"
+                style={{
+                  margin: 0,
+                  borderRadius: "8px",
+                  backgroundColor: "#FADBD8",
+                  color: "#922B21",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  padding: "10px 12px",
+                }}
+              >
+                {matchingState.error}
+              </p>
+            )}
+
+            {!matchingState.loading && matchingState.matches.length > 0 && (
+              <PrimaryButton
+                onClick={handleSendSelectedDonors}
+                disabled={
+                  matchingState.sent ||
+                  matchingState.sending ||
+                  matchingState.selectedIds.length === 0
+                }
+                icon={Plus}
+              >
+                {matchingState.sent
+                  ? "Sent to Donors"
+                  : matchingState.sending
+                    ? "Sending..."
+                    : "Send to Selected Donors"}
+              </PrimaryButton>
+            )}
+          </section>
+        )}
+
         {unreadCount > 0 && (
           <div
             style={{
@@ -658,6 +936,10 @@ export default function DashboardPage() {
       )}
 
       <style jsx global>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
         * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
         body { margin: 0; padding: 0; }
       `}</style>

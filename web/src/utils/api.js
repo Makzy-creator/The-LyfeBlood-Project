@@ -95,6 +95,10 @@ export async function apiLogin(payload) {
   });
 }
 
+export async function apiGetProfile() {
+  return apiFetch("/api/profile");
+}
+
 /**
  * Update a user profile.
  * @param {{ id: string, full_name: string, phone?: string, role: string, blood_type?: string, location?: string, availability_status?: number }} payload
@@ -175,6 +179,37 @@ export async function apiRespondToMatch(payload) {
   });
 }
 
+export async function apiSendMatches(payload) {
+  return apiFetch("/api/matches/send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiGetMatchChat(matchId) {
+  const qs = new URLSearchParams({ match_id: matchId });
+  return apiFetch(`/api/matches/chat?${qs.toString()}`);
+}
+
+export async function apiSendMatchChatMessage(payload) {
+  return apiFetch("/api/matches/chat", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiGetMatchTracking(matchId) {
+  const qs = new URLSearchParams({ match_id: matchId });
+  return apiFetch(`/api/matches/tracking?${qs.toString()}`);
+}
+
+export async function apiUpdateMatchTracking(payload) {
+  return apiFetch("/api/matches/tracking", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 // ── Check-in Tokens ───────────────────────────────────────────────────────────
 
 /**
@@ -185,6 +220,13 @@ export async function apiRespondToMatch(payload) {
  */
 export async function apiVerifyToken(payload) {
   return apiFetch("/api/tokens/verify", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiUpdateHospitalMatchStatus(payload) {
+  return apiFetch("/api/matches/hospital-status", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -210,6 +252,7 @@ export async function apiUpdateNotifications(payload = {}) {
 export default {
   register: apiRegister,
   login: apiLogin,
+  getProfile: apiGetProfile,
   updateProfile: apiUpdateProfile,
   getRequests: apiGetRequests,
   getRequest: apiGetRequest,
@@ -218,7 +261,9 @@ export default {
   getMatches: apiGetMatches,
   getMatch: apiGetMatch,
   respondToMatch: apiRespondToMatch,
+  sendMatches: apiSendMatches,
   verifyToken: apiVerifyToken,
+  updateHospitalMatchStatus: apiUpdateHospitalMatchStatus,
   getNotifications: apiGetNotifications,
   updateNotifications: apiUpdateNotifications,
 };
