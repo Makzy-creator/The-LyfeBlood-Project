@@ -2,17 +2,32 @@
  * POST /api/auth/register
  * Body: { full_name, email, phone, password, role, blood_type?, location? }
  */
-import { saveBypassUser } from "../bypass-store";
-import { createSessionToken, hashPassword } from "@/app/api/utils/auth";
-import { createSupabaseServerClient, normalizeEmail } from "@/app/api/utils/supabase";
+import {
+  createSupabaseAdminClient,
+  createSupabaseAuthClient,
+  createSupabaseServerClient,
+  normalizeEmail,
+} from "@/app/api/utils/supabase";
 
-const USER_SELECT =
-  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at, password_hash";
 const SAFE_USER_SELECT =
-  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at";
+  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, created_at";
 
 function normalizeRole(role) {
   return ["donor", "requester", "hospital"].includes(role) ? role : null;
+}
+
+function buildUserPayload({ userId, fullName, email, phone, role, bloodType, location }) {
+  return {
+    id: userId,
+    full_name: fullName.trim(),
+    email,
+    phone: phone?.trim() ?? null,
+    role,
+    blood_type: bloodType ?? null,
+    location: location ?? null,
+    availability_status: 0,
+    is_verified: 0,
+  };
 }
 
 export async function POST(request) {
@@ -38,101 +53,71 @@ export async function POST(request) {
       );
 
     const normalizedEmail = normalizeEmail(email);
+    const metadata = {
+      full_name: full_name.trim(),
+      phone: phone?.trim() ?? null,
+      role: normalizedRole,
+      blood_type: blood_type ?? null,
+      location: location ?? null,
+      availability_status: 0,
+      is_verified: 0,
+    };
 
-    if (process.env.NODE_ENV !== "production" && process.env.BYPASS_REGISTER_DB === "true") {
-      const mockUser = {
-        id: `dev-${Date.now()}`,
-        full_name: full_name.trim(),
-        email: normalizedEmail,
-        phone: phone?.trim() ?? null,
-        role: normalizedRole,
-        blood_type: blood_type ?? null,
-        location: location ?? null,
-        availability_status: 0,
-        is_verified: 1,
-        reward_points: 0,
-        created_at: new Date().toISOString(),
-      };
-      saveBypassUser(normalizedEmail, mockUser);
-      return Response.json(
-        { user: mockUser, message: "Registration (dev) successful" },
-        { status: 201 },
-      );
+    const admin = createSupabaseAdminClient();
+    const { data: created, error: createError } = await admin.auth.admin.createUser({
+      email: normalizedEmail,
+      password,
+      email_confirm: true,
+      user_metadata: metadata,
+    });
+
+    if (createError) {
+      const status = createError.message?.toLowerCase().includes("already")
+        ? 409
+        : 400;
+      return Response.json({ error: createError.message }, { status });
     }
 
+    const authUser = created.user;
     const supabase = createSupabaseServerClient();
-    const { data: existingRows, error: lookupError } = await supabase
+    const payload = buildUserPayload({
+      userId: authUser.id,
+      fullName: full_name,
+      email: normalizedEmail,
+      phone,
+      role: normalizedRole,
+      bloodType: blood_type,
+      location,
+    });
+
+    const { data: user, error: profileError } = await supabase
       .from("users")
-      .select(USER_SELECT)
-      .ilike("email", normalizedEmail)
-      .limit(1);
-
-    if (lookupError) {
-      throw lookupError;
-    }
-
-    const passwordHash = hashPassword(password);
-    const existingUser = existingRows?.[0];
-
-    if (existingUser?.password_hash) {
-      return Response.json({ error: "Email already registered" }, { status: 409 });
-    }
-
-    if (existingUser) {
-      const { data: completedUser, error: updateError } = await supabase
-        .from("users")
-        .update({
-          full_name: full_name.trim(),
-          phone: phone?.trim() ?? null,
-          role: normalizedRole,
-          blood_type: blood_type ?? null,
-          location: location ?? null,
-          password_hash: passwordHash,
-          availability_status: existingUser.availability_status ?? 0,
-          is_verified: existingUser.is_verified ?? 0,
-        })
-        .eq("id", existingUser.id)
-        .select(SAFE_USER_SELECT)
-        .single();
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      const token = createSessionToken(completedUser);
-      return Response.json(
-        { user: completedUser, token, message: "Registration completed" },
-        { status: 200 },
-      );
-    }
-
-    const createdAt = new Date().toISOString();
-
-    const { data: insertedRows, error: insertError } = await supabase
-      .from("users")
-      .insert({
-        full_name: full_name.trim(),
-        email: normalizedEmail,
-        phone: phone?.trim() ?? null,
-        role: normalizedRole,
-        blood_type: blood_type ?? null,
-        location: location ?? null,
-        password_hash: passwordHash,
-        availability_status: 0,
-        is_verified: 0,
-        created_at: createdAt,
-      })
+      .upsert(payload, { onConflict: "id" })
       .select(SAFE_USER_SELECT)
       .single();
 
-    if (insertError) {
-      throw insertError;
+    if (profileError) {
+      throw profileError;
     }
 
-    const token = createSessionToken(insertedRows);
+    const authClient = createSupabaseAuthClient();
+    const { data: sessionData, error: signInError } =
+      await authClient.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
+
+    if (signInError) {
+      throw signInError;
+    }
 
     return Response.json(
-      { user: insertedRows, token, message: "Registration successful" },
+      {
+        user,
+        session: sessionData.session,
+        token: sessionData.session?.access_token ?? null,
+        message: "Registration successful",
+      },
       { status: 201 },
     );
   } catch (err) {

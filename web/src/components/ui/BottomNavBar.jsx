@@ -1,5 +1,6 @@
 "use client";
 import { Home, Droplets, ClipboardList, User } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useApp } from "@/context/AppContext";
 
 /**
@@ -18,9 +19,18 @@ const NAV_ITEMS = [
 
 export default function BottomNavBar({ onNavigate }) {
   const { activeNav, setActiveNav } = useApp();
+  const navigate = useNavigate();
 
   const handlePress = (key) => {
     setActiveNav(key);
+    if (key === "donate") {
+      navigate("/donations/history");
+      return;
+    }
+    if (key === "requests") {
+      navigate("/requests/history");
+      return;
+    }
     onNavigate?.(key);
   };
 

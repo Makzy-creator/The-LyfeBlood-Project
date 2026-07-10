@@ -56,7 +56,7 @@ async function insertBloodRequest(supabase, payload) {
 
 export async function POST(request) {
   try {
-    const auth = requireAuth(request, ["patient", "hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["patient", "hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const body = await request.json();

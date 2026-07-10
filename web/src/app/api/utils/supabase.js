@@ -54,3 +54,33 @@ export function createSupabaseServerClient() {
     },
   });
 }
+
+export function createSupabaseAuthClient() {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      "Supabase auth configuration is missing. Set SUPABASE_URL and SUPABASE_ANON_KEY.",
+    );
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+export function createSupabaseAdminClient() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error(
+      "Supabase admin configuration is missing. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
+    );
+  }
+
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}

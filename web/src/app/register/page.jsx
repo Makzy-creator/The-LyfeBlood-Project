@@ -17,6 +17,7 @@ import SecondaryButton from "@/components/ui/SecondaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import { BLOOD_GROUPS } from "@/context/AppContext";
 import { apiRegister } from "@/utils/api";
+import { supabase } from "@/lib/supabase-client";
 
 const ROLE_META = {
   donor: {
@@ -864,7 +865,7 @@ export default function RegisterPage() {
     setSubmitting(true);
     setApiError(null);
     try {
-      await apiRegister({
+      const { session } = await apiRegister({
         full_name: form.fullName,
         email: form.email,
         phone: form.phone,
@@ -879,6 +880,12 @@ export default function RegisterPage() {
         location: form.city || form.address || null,
       });
       // API succeeded — navigate to confirmation
+      if (session?.access_token && session?.refresh_token) {
+        await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        });
+      }
       navigate("/register/confirmation");
     } catch (e) {
       setApiError(e.message ?? "Registration failed. Please try again.");

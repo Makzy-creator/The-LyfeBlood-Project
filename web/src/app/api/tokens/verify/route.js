@@ -12,7 +12,7 @@ import {
 
 export async function POST(request) {
   try {
-    const auth = requireAuth(request, ["hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["hospital_staff", "admin"]);
     if (auth.error) return auth.error;
     const role = getCanonicalRole(auth.user.role);
 

@@ -1,4 +1,8 @@
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
+import {
+  createSupabaseAuthClient,
+  createSupabaseServerClient,
+} from "@/app/api/utils/supabase";
 
 const HASH_ITERATIONS = 210000;
 const HASH_KEY_LENGTH = 32;
@@ -47,6 +51,34 @@ function sign(input) {
   return base64UrlEncode(
     createHmac("sha256", getAuthSecret()).update(input).digest(),
   );
+}
+
+function verifySignedJwt(token, secret) {
+  try {
+    const parts = token?.split(".");
+    if (parts?.length !== 3 || !secret) return null;
+
+    const [header, payload, signature] = parts;
+    const unsigned = `${header}.${payload}`;
+    const expected = base64UrlEncode(
+      createHmac("sha256", secret).update(unsigned).digest(),
+    );
+
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expected);
+    if (
+      signatureBuffer.length !== expectedBuffer.length ||
+      !timingSafeEqual(signatureBuffer, expectedBuffer)
+    ) {
+      return null;
+    }
+
+    const claims = JSON.parse(base64UrlDecode(payload));
+    if (!claims.exp || claims.exp < Math.floor(Date.now() / 1000)) return null;
+    return claims;
+  } catch {
+    return null;
+  }
 }
 
 export function hashPassword(password) {
@@ -103,28 +135,13 @@ export function createSessionToken(user) {
 
 export function verifySessionToken(token) {
   try {
-    const parts = token?.split(".");
-    if (parts?.length !== 3) return null;
-
-    const [header, payload, signature] = parts;
-    const unsigned = `${header}.${payload}`;
-    const expected = sign(unsigned);
-
-    const signatureBuffer = Buffer.from(signature);
-    const expectedBuffer = Buffer.from(expected);
-    if (
-      signatureBuffer.length !== expectedBuffer.length ||
-      !timingSafeEqual(signatureBuffer, expectedBuffer)
-    ) {
-      return null;
-    }
-
-    const claims = JSON.parse(base64UrlDecode(payload));
-    if (!claims.exp || claims.exp < Math.floor(Date.now() / 1000)) return null;
-    return claims;
+    const legacyClaims = verifySignedJwt(token, getAuthSecret());
+    if (legacyClaims) return legacyClaims;
   } catch {
     return null;
   }
+
+  return null;
 }
 
 export function getBearerToken(request) {
@@ -143,14 +160,44 @@ export function hasRole(user, allowedRoles) {
   return (allowedRoles ?? []).map(getCanonicalRole).includes(userRole);
 }
 
-export function requireAuth(request, allowedRoles) {
-  const claims = verifySessionToken(getBearerToken(request));
-  if (!claims) {
+export async function requireAuth(request, allowedRoles) {
+  const token = getBearerToken(request);
+  if (!token) {
     return {
       error: Response.json({ error: "Unauthorized" }, { status: 401 }),
       user: null,
     };
   }
+
+  const authClient = createSupabaseAuthClient();
+  const { data: authData, error: authError } = await authClient.auth.getUser(token);
+  const authUser = authData?.user;
+  if (authError || !authUser) {
+    return {
+      error: Response.json({ error: "Unauthorized" }, { status: 401 }),
+      user: null,
+    };
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data: profile, error: profileError } = await supabase
+    .from("users")
+    .select("id, email, role")
+    .eq("id", authUser.id)
+    .maybeSingle();
+
+  if (profileError || !profile) {
+    return {
+      error: Response.json({ error: "Unauthorized" }, { status: 401 }),
+      user: null,
+    };
+  }
+
+  const claims = {
+    sub: authUser.id,
+    email: authUser.email ?? profile.email ?? null,
+    role: profile.role,
+  };
 
   if (allowedRoles?.length && !hasRole(claims, allowedRoles)) {
     return {

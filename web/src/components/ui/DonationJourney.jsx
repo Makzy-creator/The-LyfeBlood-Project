@@ -69,7 +69,7 @@ export function buildDonationJourney({ request, match, matches = [] }) {
     },
     {
       key: "donor_traveling",
-      label: "Donor Traveling",
+      label: "Donor on the Way",
       done: Boolean(activeMatch?.on_the_way_at),
     },
     {

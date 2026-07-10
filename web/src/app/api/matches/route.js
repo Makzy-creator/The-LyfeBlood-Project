@@ -7,7 +7,7 @@ function byId(rows) {
 
 export async function GET(request) {
   try {
-    const auth = requireAuth(request, ["donor", "patient", "hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["donor", "patient", "hospital_staff", "admin"]);
     if (auth.error) return auth.error;
     const role = getCanonicalRole(auth.user.role);
 

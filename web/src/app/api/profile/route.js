@@ -7,11 +7,11 @@ function normalizeRole(role) {
 }
 
 const SAFE_USER_SELECT =
-  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at";
+  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, created_at";
 
 export async function GET(request) {
   try {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
     const supabase = createSupabaseServerClient();
@@ -35,7 +35,7 @@ export async function GET(request) {
 
 export async function PATCH(request) {
   try {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
     const body = await request.json();

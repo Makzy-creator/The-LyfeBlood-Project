@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Bell,
   Plus,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -51,6 +52,13 @@ const ROLE_HOME_CONFIG = {
   },
 
 };
+
+const DELETE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+function canDeleteRequest(request) {
+  const createdAt = new Date(request.requestDate).getTime();
+  return Number.isFinite(createdAt) && Date.now() - createdAt >= DELETE_AFTER_MS;
+}
 
 function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
   const [form, setForm] = useState({
@@ -356,6 +364,7 @@ export default function DashboardPage() {
     isAuthenticated,
     bloodRequests,
     addRequest,
+    deleteRequest,
     logout,
     unreadCount,
     markAllNotificationsRead,
@@ -364,6 +373,7 @@ export default function DashboardPage() {
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestError, setRequestError] = useState("");
   const [requestSuccess, setRequestSuccess] = useState("");
+  const [deletingRequestId, setDeletingRequestId] = useState(null);
   const [matchingState, setMatchingState] = useState({
     loading: false,
     request: null,
@@ -493,6 +503,24 @@ export default function DashboardPage() {
     }
   };
 
+  const handleDeleteRequest = async (request) => {
+    if (!canDeleteRequest(request) || deletingRequestId) return;
+    const confirmed = window.confirm("Delete this request permanently?");
+    if (!confirmed) return;
+
+    setDeletingRequestId(request.id);
+    setRequestError("");
+    setRequestSuccess("");
+    try {
+      await deleteRequest(request.id);
+      setRequestSuccess("Request deleted.");
+    } catch (error) {
+      setRequestError(error?.message ?? "Unable to delete request.");
+    } finally {
+      setDeletingRequestId(null);
+    }
+  };
+
   if (!currentUser) {
     return (
       <div
@@ -528,6 +556,12 @@ export default function DashboardPage() {
   }
 
   const config = ROLE_HOME_CONFIG[currentUser.role] ?? ROLE_HOME_CONFIG.donor;
+  const activeRequests = bloodRequests.filter(
+    (r) =>
+      ![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(
+        r.status,
+      ),
+  );
 
   return (
     <>
@@ -886,14 +920,7 @@ export default function DashboardPage() {
                 borderRadius: "999px",
               }}
             >
-              {
-                bloodRequests.filter(
-                  (r) =>
-                    ![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(
-                      r.status,
-                    ),
-                ).length
-              }{" "}
+              {activeRequests.length}{" "}
               active
             </span>
           </div>
@@ -901,12 +928,38 @@ export default function DashboardPage() {
           <div
             style={{ display: "flex", flexDirection: "column", gap: "10px" }}
           >
-            {bloodRequests.map((req) => (
-              <RequestCard
-                key={req.id}
-                request={req}
-                onClick={() => navigate(`/requests/${req.id}`)}
-              />
+            {activeRequests.map((req) => (
+              <div key={req.id} style={{ position: "relative" }}>
+                <RequestCard
+                  request={req}
+                  onClick={() => navigate(`/requests/${req.id}`)}
+                />
+                {canDeleteRequest(req) && (
+                  <button
+                    type="button"
+                    aria-label="Delete request"
+                    onClick={() => handleDeleteRequest(req)}
+                    disabled={deletingRequestId === req.id}
+                    style={{
+                      position: "absolute",
+                      top: "10px",
+                      right: "10px",
+                      width: "32px",
+                      height: "32px",
+                      borderRadius: "8px",
+                      border: "1px solid #F1948A",
+                      backgroundColor: "#FFFFFF",
+                      color: "#922B21",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: deletingRequestId === req.id ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </section>

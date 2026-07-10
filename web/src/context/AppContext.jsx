@@ -2,12 +2,14 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import {
   apiCreateRequest,
+  apiDeleteRequest,
   apiGetNotifications,
   apiGetProfile,
   apiGetRequests,
   apiUpdateNotifications,
   apiUpdateRequestStatus,
 } from "@/utils/api";
+import { supabase } from "@/lib/supabase-client";
 
 // ─── PERSONA DEFINITIONS ─────────────────────────────────────────────────────
 // ─── BLOOD GROUPS ─────────────────────────────────────────────────────────────
@@ -230,6 +232,9 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
       window.localStorage.removeItem(AUTH_STORAGE_KEY);
       window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     }
+    supabase.auth.signOut().catch((error) => {
+      console.error("[AppContext] Failed to sign out of Supabase:", error);
+    });
   }, []);
 
   const updateCurrentUser = useCallback((nextUser) => {
@@ -245,6 +250,48 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     const { user } = await apiGetProfile();
     updateCurrentUser(user);
     return user;
+  }, [updateCurrentUser]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function applySession(session) {
+      if (!session?.access_token || !canUseStorage()) return;
+      window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, session.access_token);
+      try {
+        const { user } = await apiGetProfile();
+        if (!active) return;
+        updateCurrentUser(user);
+        setIsAuthenticated(true);
+      } catch (error) {
+        console.error("[AppContext] Failed to restore Supabase session:", error);
+      }
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      applySession(data?.session);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        if (canUseStorage()) {
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+          window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+        }
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+        return;
+      }
+
+      if (session?.access_token) {
+        applySession(session);
+      }
+    });
+
+    return () => {
+      active = false;
+      listener?.subscription?.unsubscribe();
+    };
   }, [updateCurrentUser]);
 
   const toggleDonorAvailable = useCallback(() => {
@@ -306,6 +353,14 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return { request: normalizedRequest };
   }, [refreshNotifications]);
 
+  const deleteRequest = useCallback(async (requestId) => {
+    await apiDeleteRequest(requestId);
+    setBloodRequests((prev) => prev.filter((request) => request.id !== requestId));
+    refreshNotifications().catch((error) => {
+      console.error("[AppContext] Failed to refresh notifications after request delete:", error);
+    });
+  }, [refreshNotifications]);
+
   const markAllNotificationsRead = useCallback(async () => {
     await apiUpdateNotifications({ read: true });
     setNotifications((prev) => prev.map((notification) => ({
@@ -339,6 +394,7 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
         bloodRequests,
         updateRequestStatus,
         addRequest,
+        deleteRequest,
         notifications,
         unreadCount,
         markAllNotificationsRead,

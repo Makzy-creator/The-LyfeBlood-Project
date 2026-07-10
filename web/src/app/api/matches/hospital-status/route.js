@@ -2,8 +2,6 @@ import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 import { createNotifications, requestRecipientIds } from "@/app/api/utils/notifications";
 import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 
-const DONATION_REWARD_POINTS = 100;
-
 const ACTIONS = {
   arrived: {
     matchField: "arrived_at",
@@ -27,7 +25,7 @@ const ACTIONS = {
 
 export async function POST(request) {
   try {
-    const auth = requireAuth(request, ["hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const body = await request.json();
@@ -107,20 +105,11 @@ export async function POST(request) {
         : action.requestStatus;
 
     if (body.action === "donation_completed") {
-      const { data: donor, error: donorLookupError } = await supabase
-        .from("users")
-        .select("id, reward_points")
-        .eq("id", match.donor_id)
-        .maybeSingle();
-
-      if (donorLookupError) throw donorLookupError;
-
       const { error: donorUpdateError } = await supabase
         .from("users")
         .update({
           last_donation_at: now,
           availability_status: 0,
-          reward_points: Number(donor?.reward_points ?? 0) + DONATION_REWARD_POINTS,
         })
         .eq("id", match.donor_id);
 

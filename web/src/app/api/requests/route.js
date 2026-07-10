@@ -8,8 +8,6 @@ import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 import { createNotifications, requestRecipientIds } from "@/app/api/utils/notifications";
 
-const DONATION_REWARD_POINTS = 100;
-
 const VALID_STATUSES = [
   "pending",
   "verified",
@@ -31,6 +29,18 @@ const STATUS_ALIASES = {
   Cancelled: "cancelled",
 };
 
+const REQUEST_TYPES_BY_DONOR = {
+  "O-": ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"],
+  "O+": ["O+", "A+", "B+", "AB+"],
+  "A-": ["A-", "A+", "AB-", "AB+"],
+  "A+": ["A+", "AB+"],
+  "B-": ["B-", "B+", "AB-", "AB+"],
+  "B+": ["B+", "AB+"],
+  "AB-": ["AB-", "AB+"],
+  "AB+": ["AB+"],
+  AB: ["AB-", "AB+"],
+};
+
 function normalizeStatusInput(status) {
   return STATUS_ALIASES[status] ?? status;
 }
@@ -48,7 +58,7 @@ function sortPriority(urgencyTier) {
 
 export async function GET(request) {
   try {
-    const auth = requireAuth(request, ["patient", "donor", "hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["patient", "donor", "hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(request.url);
@@ -67,7 +77,22 @@ export async function GET(request) {
 
     const role = getCanonicalRole(auth.user.role);
     if (role === "donor") {
-      return Response.json({ requests: [] });
+      const { data: donor, error: donorError } = await supabase
+        .from("users")
+        .select("blood_type")
+        .eq("id", auth.user.sub)
+        .maybeSingle();
+
+      if (donorError) throw donorError;
+
+      const compatibleRequestTypes = REQUEST_TYPES_BY_DONOR[donor?.blood_type] ?? [];
+      if (!compatibleRequestTypes.length) {
+        return Response.json({ requests: [] });
+      }
+
+      query = query
+        .neq("status", "fulfilled")
+        .in("blood_type_needed", compatibleRequestTypes);
     }
     if (role === "patient") {
       query = query.eq("requested_by", auth.user.sub);
@@ -105,7 +130,7 @@ export async function GET(request) {
 
 export async function PATCH(request) {
   try {
-    const auth = requireAuth(request, ["hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const body = await request.json();
@@ -171,27 +196,15 @@ export async function PATCH(request) {
 
       const donorIds = [...new Set(newlyCompletedMatches.map((match) => match.donor_id).filter(Boolean))];
       if (donorIds.length) {
-        const { data: donors, error: donorLookupError } = await supabase
+        const { error: donorCooldownError } = await supabase
           .from("users")
-          .select("id, reward_points")
+          .update({
+            last_donation_at: completedAt,
+            availability_status: 0,
+          })
           .in("id", donorIds);
 
-        if (donorLookupError) throw donorLookupError;
-
-        await Promise.all(
-          (donors ?? []).map(async (donor) => {
-            const { error: donorCooldownError } = await supabase
-              .from("users")
-              .update({
-                last_donation_at: completedAt,
-                availability_status: 0,
-                reward_points: Number(donor.reward_points ?? 0) + DONATION_REWARD_POINTS,
-              })
-              .eq("id", donor.id);
-
-            if (donorCooldownError) throw donorCooldownError;
-          }),
-        );
+        if (donorCooldownError) throw donorCooldownError;
       }
     }
 

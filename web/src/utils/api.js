@@ -130,6 +130,12 @@ export async function apiGetRequest(requestId) {
   return apiFetch(`/api/requests/${encodeURIComponent(requestId)}`);
 }
 
+export async function apiDeleteRequest(requestId) {
+  return apiFetch(`/api/requests/${encodeURIComponent(requestId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function apiUpdateRequestStatus(payload) {
   return apiFetch("/api/requests", {
     method: "PATCH",
@@ -256,6 +262,7 @@ export default {
   updateProfile: apiUpdateProfile,
   getRequests: apiGetRequests,
   getRequest: apiGetRequest,
+  deleteRequest: apiDeleteRequest,
   updateRequestStatus: apiUpdateRequestStatus,
   createRequest: apiCreateRequest,
   getMatches: apiGetMatches,

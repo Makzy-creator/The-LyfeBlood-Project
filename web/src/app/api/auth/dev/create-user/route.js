@@ -2,7 +2,7 @@ import { saveBypassUser } from "../../bypass-store";
 import { requireAuth } from "@/app/api/utils/auth";
 
 export async function GET(request) {
-  const auth = requireAuth(request, ["admin"]);
+  const auth = await requireAuth(request, ["admin"]);
   if (auth.error) return auth.error;
 
   if (process.env.NODE_ENV === "production" || process.env.BYPASS_REGISTER_DB !== "true")

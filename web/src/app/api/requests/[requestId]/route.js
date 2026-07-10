@@ -1,6 +1,8 @@
 import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 
+const DELETE_AFTER_MS = 24 * 60 * 60 * 1000;
+
 function getRequestId(request, params) {
   if (params?.requestId) return params.requestId;
   const pathname = new URL(request.url).pathname;
@@ -22,7 +24,7 @@ async function donorHasAssignedMatch(supabase, requestId, donorId) {
 
 export async function GET(request, context = {}) {
   try {
-    const auth = requireAuth(request, ["patient", "donor", "hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["patient", "donor", "hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const params = await context.params;
@@ -62,6 +64,78 @@ export async function GET(request, context = {}) {
     console.error("[GET /api/requests/:id]", err);
     return Response.json(
       { error: "Failed to fetch request" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(request, context = {}) {
+  try {
+    const auth = await requireAuth(request, ["patient", "hospital_staff", "admin"]);
+    if (auth.error) return auth.error;
+
+    const params = await context.params;
+    const requestId = getRequestId(request, params);
+    if (!requestId) {
+      return Response.json({ error: "request_id is required" }, { status: 400 });
+    }
+
+    const supabase = createSupabaseServerClient();
+    const { data: bloodRequest, error: lookupError } = await supabase
+      .from("blood_requests")
+      .select("id, requested_by, hospital_id, created_at")
+      .eq("id", requestId)
+      .maybeSingle();
+
+    if (lookupError) throw lookupError;
+    if (!bloodRequest) {
+      return Response.json({ error: "Request not found" }, { status: 404 });
+    }
+
+    const role = getCanonicalRole(auth.user.role);
+    const authorized =
+      role === "admin" ||
+      bloodRequest.requested_by === auth.user.sub ||
+      bloodRequest.hospital_id === auth.user.sub;
+
+    if (!authorized) {
+      return Response.json({ error: "Request not found" }, { status: 404 });
+    }
+
+    const createdAt = new Date(bloodRequest.created_at).getTime();
+    if (!Number.isFinite(createdAt) || Date.now() - createdAt < DELETE_AFTER_MS) {
+      return Response.json(
+        { error: "Requests can only be deleted after 24 hours" },
+        { status: 409 },
+      );
+    }
+
+    const { error: notificationDeleteError } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("request_id", requestId);
+
+    if (notificationDeleteError) throw notificationDeleteError;
+
+    const { error: matchDeleteError } = await supabase
+      .from("matches")
+      .delete()
+      .eq("request_id", requestId);
+
+    if (matchDeleteError) throw matchDeleteError;
+
+    const { error: requestDeleteError } = await supabase
+      .from("blood_requests")
+      .delete()
+      .eq("id", requestId);
+
+    if (requestDeleteError) throw requestDeleteError;
+
+    return Response.json({ message: "Request deleted" });
+  } catch (err) {
+    console.error("[DELETE /api/requests/:id]", err);
+    return Response.json(
+      { error: "Failed to delete request" },
       { status: 500 },
     );
   }

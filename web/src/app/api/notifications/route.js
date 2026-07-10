@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 
 export async function GET(request) {
   try {
-    const auth = requireAuth(request, ["donor", "patient", "hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["donor", "patient", "hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const url = new URL(request.url);
@@ -52,7 +52,7 @@ export async function GET(request) {
 
 export async function PATCH(request) {
   try {
-    const auth = requireAuth(request, ["donor", "patient", "hospital_staff", "admin"]);
+    const auth = await requireAuth(request, ["donor", "patient", "hospital_staff", "admin"]);
     if (auth.error) return auth.error;
 
     const body = await request.json();

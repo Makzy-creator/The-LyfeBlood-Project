@@ -45,7 +45,7 @@ function calculateTravel(latitude, longitude, bloodRequest) {
 
 export async function GET(request) {
   try {
-    const auth = requireAuth(request, ["donor", "patient"]);
+    const auth = await requireAuth(request, ["donor", "patient"]);
     if (auth.error) return auth.error;
 
     const matchId = getMatchId(request);
@@ -77,7 +77,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const auth = requireAuth(request, ["donor"]);
+    const auth = await requireAuth(request, ["donor"]);
     if (auth.error) return auth.error;
 
     const body = await request.json();
