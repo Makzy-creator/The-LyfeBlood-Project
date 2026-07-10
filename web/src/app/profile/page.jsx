@@ -8,7 +8,7 @@ import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import { useApp, BLOOD_GROUPS } from "@/context/AppContext";
-import { apiUpdateProfile } from "@/utils/api";
+import { supabase } from "@/lib/supabase-client";
 
 const inputStyle = {
   width: "100%",
@@ -53,6 +53,7 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Profile updated.");
   const [roleSwitchConfirmed, setRoleSwitchConfirmed] = useState(false);
   const [form, setForm] = useState({
     fullName: "",
@@ -98,23 +99,43 @@ export default function ProfilePage() {
     setSaving(true);
     setError(null);
     setDone(false);
+    setSuccessMessage("Profile updated.");
     try {
-      const { user } = await apiUpdateProfile({
-        id: currentUser.id,
-        email: currentUser.email,
-        full_name: form.fullName,
-        phone: form.phone,
-        role: isHospitalAccount ? "hospital" : form.role,
-        blood_type: form.bloodGroup || null,
-        location: form.location,
-        availability_status: form.isAvailable ? 1 : 0,
+      const { data: user, error: updateError } = await supabase
+        .from("users")
+        .update({
+          full_name: form.fullName.trim(),
+          phone: form.phone.trim() || null,
+          blood_type: form.bloodGroup || null,
+          location: form.location.trim() || null,
+          availability_status: form.isAvailable ? 1 : 0,
+        })
+        .eq("id", currentUser.id)
+        .select(
+          "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, created_at",
+        )
+        .single();
+
+      if (updateError) throw updateError;
+
+      updateCurrentUser({
+        ...user,
+        name: user.full_name,
+        bloodGroup: user.blood_type,
+        isAvailable: !!user.availability_status,
       });
-      updateCurrentUser(user);
+
+      if (roleChanged) {
+        const { error: roleChangeError } = await supabase.rpc("request_role_change", {
+          target_role: form.role,
+        });
+
+        if (roleChangeError) throw roleChangeError;
+        setSuccessMessage("Profile updated. Role change request submitted.");
+      }
+
       setDone(true);
       setRoleSwitchConfirmed(false);
-      if (roleChanged) {
-        navigate(ROLE_HOME_ROUTE[user.role] ?? "/dashboard");
-      }
     } catch (e) {
       setError(e?.message ?? "Failed to update profile");
     } finally {
@@ -371,7 +392,7 @@ export default function ProfilePage() {
                   fontWeight: "600",
                 }}
               >
-                Profile updated.
+                {successMessage}
               </div>
             )}
 

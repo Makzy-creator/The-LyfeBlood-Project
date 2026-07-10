@@ -1,6 +1,10 @@
-import { requireAuth } from "@/app/api/utils/auth";
+import { createClient } from "@supabase/supabase-js";
+import { getBearerToken, requireAuth } from "@/app/api/utils/auth";
 import { loadAcceptedPatientDonorMatch } from "@/app/api/utils/match-access";
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import {
+  createSupabaseServerClient,
+  getSupabaseConfig,
+} from "@/app/api/utils/supabase";
 
 const QUICK_REPLIES = {
   on_the_way: "I'm on my way",
@@ -10,6 +14,27 @@ const QUICK_REPLIES = {
 
 function getMatchId(request) {
   return new URL(request.url).searchParams.get("match_id");
+}
+
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
+
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
+  }
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
 }
 
 export async function GET(request) {
@@ -22,7 +47,8 @@ export async function GET(request) {
     const access = await loadAcceptedPatientDonorMatch(supabase, matchId, auth);
     if (access.error) return access.error;
 
-    const { data: messages, error } = await supabase
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: messages, error } = await userSupabase
       .from("chat_messages")
       .select("id, match_id, sender_id, message, quick_type, created_at")
       .eq("match_id", matchId)
@@ -69,7 +95,8 @@ export async function POST(request) {
     const access = await loadAcceptedPatientDonorMatch(supabase, matchId, auth);
     if (access.error) return access.error;
 
-    const { data: insertedMessage, error } = await supabase
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: insertedMessage, error } = await userSupabase
       .from("chat_messages")
       .insert({
         match_id: matchId,

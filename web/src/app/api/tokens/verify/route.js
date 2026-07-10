@@ -2,19 +2,60 @@
  * POST /api/tokens/verify
  * Body: { otp: string, match_id: string }
  */
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
-import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { createClient } from "@supabase/supabase-js";
+import {
+  createSupabaseServerClient,
+  getSupabaseConfig,
+} from "@/app/api/utils/supabase";
+import { getBearerToken, requireAuth } from "@/app/api/utils/auth";
 import { verifyOtpHash } from "@/app/api/utils/otp";
 import {
   createNotifications,
   requestRecipientIds,
 } from "@/app/api/utils/notifications";
 
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
+
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
+  }
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+}
+
+function rpcErrorResponse(error) {
+  const message = error?.message ?? "Verification failed";
+  if (message.includes("already been used")) {
+    return Response.json({ error: message }, { status: 409 });
+  }
+  if (message.includes("expired") || message.includes("Invalid")) {
+    return Response.json({ error: message }, { status: 401 });
+  }
+  if (message.includes("Forbidden") || message.includes("not verified")) {
+    return Response.json({ error: message }, { status: 403 });
+  }
+  if (message.includes("not ready")) {
+    return Response.json({ error: message }, { status: 409 });
+  }
+  return Response.json({ error: "Verification failed" }, { status: 500 });
+}
+
 export async function POST(request) {
   try {
     const auth = await requireAuth(request, ["hospital_staff", "admin"]);
     if (auth.error) return auth.error;
-    const role = getCanonicalRole(auth.user.role);
 
     const body = await request.json();
     const { otp, match_id } = body;
@@ -79,85 +120,19 @@ export async function POST(request) {
       return Response.json({ error: "OTP has expired" }, { status: 401 });
     }
 
-    const { data: match, error: matchError } = await supabase
-      .from("matches")
-      .select("id, request_id, donor_id, match_status")
-      .eq("id", token.match_id)
-      .single();
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: result, error: verifyError } = await userSupabase.rpc("verify_donor_otp", {
+      p_token_id: String(token.id),
+      p_match_id: match_id,
+      p_verified_by: auth.user.sub,
+    });
 
-    if (matchError) throw matchError;
-    if (match.match_status !== "Accepted") {
-      return Response.json(
-        { error: "Match is not ready for check-in" },
-        { status: 409 },
-      );
-    }
+    if (verifyError) throw verifyError;
 
-    const { data: donor, error: donorError } = await supabase
-      .from("users")
-      .select("id, full_name, email, phone, blood_type, is_verified")
-      .eq("id", match.donor_id)
-      .single();
-
-    if (donorError) throw donorError;
-    if (!donor || (donor.is_verified !== true && donor.is_verified !== 1)) {
-      return Response.json(
-        { error: "Donor identity is not verified" },
-        { status: 403 },
-      );
-    }
-
-    const { data: bloodRequest, error: requestLookupError } = await supabase
-      .from("blood_requests")
-      .select("id, requested_by, hospital_id")
-      .eq("id", match.request_id)
-      .single();
-
-    if (requestLookupError) throw requestLookupError;
-
-    if (
-      role !== "admin" &&
-      bloodRequest?.requested_by !== auth.user.sub &&
-      bloodRequest?.hospital_id !== auth.user.sub
-    ) {
-      return Response.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const checkedInAt = new Date().toISOString();
-    const { data: usedToken, error: tokenUpdateError } = await supabase
-      .from("verification_tokens")
-      .update({
-        status: "Used",
-        used_at: checkedInAt,
-        checked_in_at: checkedInAt,
-        verified_by: auth.user.sub,
-      })
-      .eq("id", token.id)
-      .eq("status", "Active")
-      .select("id")
-      .maybeSingle();
-
-    if (tokenUpdateError) throw tokenUpdateError;
-    if (!usedToken) {
-      return Response.json({ error: "OTP has already been used" }, { status: 409 });
-    }
-
-    const { data: arrivedRequest, error: requestUpdateError } = await supabase
-      .from("blood_requests")
-      .update({ status: "checked_in" })
-      .eq("id", match.request_id)
-      .select("id, status, hospital_name, blood_type_needed")
-      .single();
-
-    if (requestUpdateError) throw requestUpdateError;
-
-    const { error: matchArrivalError } = await supabase
-      .from("matches")
-      .update({ arrived_at: checkedInAt })
-      .eq("id", match.id)
-      .is("arrived_at", null);
-
-    if (matchArrivalError) throw matchArrivalError;
+    const match = result?.match;
+    const arrivedRequest = result?.request;
+    const bloodRequest = result?.request;
+    const donor = result?.donor;
 
     await createNotifications(supabase, [
       {
@@ -184,12 +159,12 @@ export async function POST(request) {
       request_id: match.request_id,
       request: arrivedRequest ?? null,
       donor,
-      checked_in_at: checkedInAt,
+      checked_in_at: result?.checked_in_at,
       verified_by: auth.user.sub,
       new_status: "checked_in",
     });
   } catch (err) {
     console.error("[POST /api/tokens/verify]", err);
-    return Response.json({ error: "Verification failed" }, { status: 500 });
+    return rpcErrorResponse(err);
   }
 }

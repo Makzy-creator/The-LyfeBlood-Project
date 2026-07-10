@@ -1,5 +1,27 @@
-import { requireAuth } from "@/app/api/utils/auth";
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import { createClient } from "@supabase/supabase-js";
+import { getBearerToken, requireAuth } from "@/app/api/utils/auth";
+import { getSupabaseConfig } from "@/app/api/utils/supabase";
+
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
+
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
+  }
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+}
 
 export async function GET(request) {
   try {
@@ -10,8 +32,8 @@ export async function GET(request) {
     const limit = Math.min(Number.parseInt(url.searchParams.get("limit") ?? "50", 10), 100);
     const unreadOnly = url.searchParams.get("unread") === "true";
 
-    const supabase = createSupabaseServerClient();
-    let query = supabase
+    const userSupabase = createUserSupabaseClient(request);
+    let query = userSupabase
       .from("notifications")
       .select("*")
       .eq("user_id", auth.user.sub)
@@ -26,7 +48,7 @@ export async function GET(request) {
     const [{ data: notifications, error }, { count, error: countError }] =
       await Promise.all([
         query,
-        supabase
+        userSupabase
           .from("notifications")
           .select("id", { count: "exact", head: true })
           .eq("user_id", auth.user.sub)
@@ -60,8 +82,8 @@ export async function PATCH(request) {
     const read = body.read !== false;
     const readAt = read ? new Date().toISOString() : null;
 
-    const supabase = createSupabaseServerClient();
-    let update = supabase
+    const userSupabase = createUserSupabaseClient(request);
+    let update = userSupabase
       .from("notifications")
       .update({ read_at: readAt })
       .eq("user_id", auth.user.sub);

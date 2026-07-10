@@ -1,6 +1,10 @@
-import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { createClient } from "@supabase/supabase-js";
+import { getBearerToken, requireAuth } from "@/app/api/utils/auth";
 import { createNotifications, requestRecipientIds } from "@/app/api/utils/notifications";
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import {
+  createSupabaseServerClient,
+  getSupabaseConfig,
+} from "@/app/api/utils/supabase";
 
 const ACTIONS = {
   arrived: {
@@ -23,6 +27,45 @@ const ACTIONS = {
   },
 };
 
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
+
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
+  }
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+}
+
+function rpcErrorResponse(error) {
+  const message = error?.message ?? "Failed to update hospital match status";
+  if (message.includes("not found")) {
+    return Response.json({ error: message }, { status: 404 });
+  }
+  if (message.includes("Forbidden")) {
+    return Response.json({ error: message }, { status: 403 });
+  }
+  if (
+    message.includes("Only accepted") ||
+    message.includes("before") ||
+    message.includes("already")
+  ) {
+    return Response.json({ error: message }, { status: 409 });
+  }
+  return Response.json({ error: "Failed to update hospital match status" }, { status: 500 });
+}
+
 export async function POST(request) {
   try {
     const auth = await requireAuth(request, ["hospital_staff", "admin"]);
@@ -43,90 +86,19 @@ export async function POST(request) {
     }
 
     const supabase = createSupabaseServerClient();
-    const role = getCanonicalRole(auth.user.role);
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: result, error } = await userSupabase.rpc("mark_hospital_status", {
+      p_match_id: matchId,
+      p_action: body.action,
+    });
 
-    const { data: match, error: matchError } = await supabase
-      .from("matches")
-      .select("id, request_id, donor_id, match_status, arrived_at, blood_collected_at, donation_completed_at")
-      .eq("id", matchId)
-      .maybeSingle();
+    if (error) throw error;
 
-    if (matchError) throw matchError;
-    if (!match) {
-      return Response.json({ error: "Match not found" }, { status: 404 });
-    }
-    if (match.match_status !== "Accepted") {
-      return Response.json({ error: "Only accepted matches can be updated" }, { status: 409 });
-    }
-    if (body.action === "blood_collected" && !match.arrived_at) {
-      return Response.json({ error: "Mark donor as arrived before recording blood collection" }, { status: 409 });
-    }
-    if (body.action === "donation_completed" && !match.blood_collected_at) {
-      return Response.json({ error: "Record blood collection before completing donation" }, { status: 409 });
-    }
-    if (body.action === "donation_completed" && match.donation_completed_at) {
-      return Response.json({ error: "Donation is already completed" }, { status: 409 });
-    }
-
-    const { data: bloodRequest, error: requestError } = await supabase
-      .from("blood_requests")
-      .select("id, requested_by, hospital_id, hospital_name, blood_type_needed, status")
-      .eq("id", match.request_id)
-      .maybeSingle();
-
-    if (requestError) throw requestError;
-    if (!bloodRequest) {
-      return Response.json({ error: "Request not found" }, { status: 404 });
-    }
-    if (
-      role !== "admin" &&
-      bloodRequest.requested_by !== auth.user.sub &&
-      bloodRequest.hospital_id !== auth.user.sub
-    ) {
-      return Response.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (["fulfilled", "cancelled"].includes(bloodRequest.status)) {
-      return Response.json({ error: "Request is already closed" }, { status: 409 });
-    }
-
-    const now = new Date().toISOString();
-    const { data: updatedMatch, error: updateMatchError } = await supabase
-      .from("matches")
-      .update({ [action.matchField]: match[action.matchField] ?? now })
-      .eq("id", matchId)
-      .select("id, request_id, donor_id, match_status, arrived_at, blood_collected_at, donation_completed_at")
-      .single();
-
-    if (updateMatchError) throw updateMatchError;
-
-    const nextRequestStatus =
-      body.action === "arrived" && bloodRequest.status === "blood_collected"
-        ? "blood_collected"
-        : action.requestStatus;
-
-    if (body.action === "donation_completed") {
-      const { error: donorUpdateError } = await supabase
-        .from("users")
-        .update({
-          last_donation_at: now,
-          availability_status: 0,
-        })
-        .eq("id", match.donor_id);
-
-      if (donorUpdateError) throw donorUpdateError;
-    }
-
-    const { data: updatedRequest, error: updateRequestError } = await supabase
-      .from("blood_requests")
-      .update({
-        status: nextRequestStatus,
-        ...(body.action === "donation_completed" ? { matching_status: "completed" } : {}),
-      })
-      .eq("id", match.request_id)
-      .select("*")
-      .single();
-
-    if (updateRequestError) throw updateRequestError;
+    const updatedMatch = result?.match;
+    const updatedRequest = result?.request;
+    const nextRequestStatus = result?.new_status;
+    const bloodRequest = updatedRequest;
+    const match = updatedMatch;
 
     const recipients = [...requestRecipientIds(bloodRequest), match.donor_id];
     await createNotifications(
@@ -150,6 +122,6 @@ export async function POST(request) {
     });
   } catch (err) {
     console.error("[POST /api/matches/hospital-status]", err);
-    return Response.json({ error: "Failed to update hospital match status" }, { status: 500 });
+    return rpcErrorResponse(err);
   }
 }

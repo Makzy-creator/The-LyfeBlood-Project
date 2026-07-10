@@ -2,6 +2,17 @@ import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 
 const DELETE_AFTER_MS = 24 * 60 * 60 * 1000;
+const REQUEST_TYPES_BY_DONOR = {
+  "O-": ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"],
+  "O+": ["O+", "A+", "B+", "AB+"],
+  "A-": ["A-", "A+", "AB-", "AB+"],
+  "A+": ["A+", "AB+"],
+  "B-": ["B-", "B+", "AB-", "AB+"],
+  "B+": ["B+", "AB+"],
+  "AB-": ["AB-", "AB+"],
+  "AB+": ["AB+"],
+  AB: ["AB-", "AB+"],
+};
 
 function getRequestId(request, params) {
   if (params?.requestId) return params.requestId;
@@ -20,6 +31,21 @@ async function donorHasAssignedMatch(supabase, requestId, donorId) {
 
   if (error) throw error;
   return Boolean(data);
+}
+
+async function donorCanReadCompatibleRequest(supabase, bloodRequest, donorId) {
+  if (["fulfilled", "cancelled", "Completed", "Cancelled"].includes(bloodRequest.status)) return false;
+
+  const { data: donor, error } = await supabase
+    .from("users")
+    .select("blood_type")
+    .eq("id", donorId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  const compatibleRequestTypes = REQUEST_TYPES_BY_DONOR[donor?.blood_type] ?? [];
+  return compatibleRequestTypes.includes(bloodRequest.blood_type_needed);
 }
 
 export async function GET(request, context = {}) {
@@ -52,7 +78,9 @@ export async function GET(request, context = {}) {
       bloodRequest.hospital_id === auth.user.sub;
 
     if (!authorized && role === "donor") {
-      authorized = await donorHasAssignedMatch(supabase, requestId, auth.user.sub);
+      authorized =
+        await donorHasAssignedMatch(supabase, requestId, auth.user.sub) ||
+        await donorCanReadCompatibleRequest(supabase, bloodRequest, auth.user.sub);
     }
 
     if (!authorized) {

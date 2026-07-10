@@ -5,7 +5,6 @@ import {
   apiDeleteRequest,
   apiGetNotifications,
   apiGetProfile,
-  apiGetRequests,
   apiUpdateNotifications,
   apiUpdateRequestStatus,
 } from "@/utils/api";
@@ -141,6 +140,17 @@ function normalizeRole(role) {
   return role;
 }
 
+function requestSortPriority(urgencyTier) {
+  switch (urgencyTier) {
+    case "SOS":
+      return 0;
+    case "Urgent":
+      return 1;
+    default:
+      return 2;
+  }
+}
+
 export function AppProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(getInitialUser);
 
@@ -155,8 +165,22 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
   const [incomingMatchAlert, setIncomingMatchAlert] = useState(null);
 
   const refreshBloodRequests = useCallback(async () => {
-    const { requests } = await apiGetRequests();
-    setBloodRequests((requests ?? []).map(normalizeBloodRequest));
+    const { data, error } = await supabase
+      .from("blood_requests")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+
+    const requests = (data ?? []).sort((a, b) => {
+      const aPriority = requestSortPriority(a?.urgency_tier);
+      const bPriority = requestSortPriority(b?.urgency_tier);
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      return new Date(b?.created_at ?? 0).getTime() - new Date(a?.created_at ?? 0).getTime();
+    });
+
+    setBloodRequests(requests.map(normalizeBloodRequest));
   }, []);
 
   const refreshNotifications = useCallback(async () => {

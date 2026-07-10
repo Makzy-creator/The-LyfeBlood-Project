@@ -1,9 +1,12 @@
-import { requireAuth } from "@/app/api/utils/auth";
+import { createClient } from "@supabase/supabase-js";
+import { getBearerToken, requireAuth } from "@/app/api/utils/auth";
 import { loadAcceptedPatientDonorMatch } from "@/app/api/utils/match-access";
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
+import {
+  createSupabaseServerClient,
+  getSupabaseConfig,
+} from "@/app/api/utils/supabase";
 
 const TRAVEL_STATUSES = new Set(["on_the_way", "arrived"]);
-const AVERAGE_CITY_SPEED_KMH = 25;
 
 function toNumber(value) {
   const n = Number(value);
@@ -14,33 +17,25 @@ function getMatchId(request) {
   return new URL(request.url).searchParams.get("match_id");
 }
 
-function distanceKm(aLat, aLng, bLat, bLng) {
-  const earthKm = 6371;
-  const dLat = ((bLat - aLat) * Math.PI) / 180;
-  const dLng = ((bLng - aLng) * Math.PI) / 180;
-  const lat1 = (aLat * Math.PI) / 180;
-  const lat2 = (bLat * Math.PI) / 180;
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-  return 2 * earthKm * Math.asin(Math.sqrt(h));
-}
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
 
-function calculateTravel(latitude, longitude, bloodRequest) {
-  const donorLat = toNumber(latitude);
-  const donorLng = toNumber(longitude);
-  const requestLat = toNumber(bloodRequest.latitude);
-  const requestLng = toNumber(bloodRequest.longitude);
-
-  if ([donorLat, donorLng, requestLat, requestLng].some((value) => value === null)) {
-    return { distance_km: null, eta_minutes: null };
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
   }
 
-  const distance = Number(distanceKm(donorLat, donorLng, requestLat, requestLng).toFixed(2));
-  return {
-    distance_km: distance,
-    eta_minutes: Math.max(1, Math.ceil((distance / AVERAGE_CITY_SPEED_KMH) * 60)),
-  };
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
 }
 
 export async function GET(request) {
@@ -53,7 +48,8 @@ export async function GET(request) {
     const access = await loadAcceptedPatientDonorMatch(supabase, matchId, auth);
     if (access.error) return access.error;
 
-    const { data: locations, error } = await supabase
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: locations, error } = await userSupabase
       .from("donor_locations")
       .select("id, match_id, donor_id, latitude, longitude, distance_km, eta_minutes, status, created_at")
       .eq("match_id", matchId)
@@ -106,41 +102,17 @@ export async function POST(request) {
       return Response.json({ error: "Location updates are closed after arrival" }, { status: 409 });
     }
 
-    const travel = calculateTravel(latitude, longitude, access.bloodRequest);
-    const now = new Date().toISOString();
-
-    const matchUpdate = {};
-    if (!access.match.on_the_way_at) matchUpdate.on_the_way_at = now;
-    if (status === "arrived" && !access.match.arrived_at) matchUpdate.arrived_at = now;
-
-    if (Object.keys(matchUpdate).length) {
-      const { error: updateError } = await supabase
-        .from("matches")
-        .update(matchUpdate)
-        .eq("id", matchId)
-        .eq("donor_id", auth.user.sub)
-        .eq("match_status", "Accepted");
-
-      if (updateError) throw updateError;
-    }
-
-    const { data: location, error } = await supabase
-      .from("donor_locations")
-      .insert({
-        match_id: matchId,
-        donor_id: auth.user.sub,
-        latitude,
-        longitude,
-        distance_km: travel.distance_km,
-        eta_minutes: status === "arrived" ? 0 : travel.eta_minutes,
-        status,
-      })
-      .select("id, match_id, donor_id, latitude, longitude, distance_km, eta_minutes, status, created_at")
-      .single();
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: result, error } = await userSupabase.rpc("update_tracking", {
+      p_match_id: matchId,
+      p_latitude: latitude,
+      p_longitude: longitude,
+      p_status: status,
+    });
 
     if (error) throw error;
 
-    return Response.json({ location });
+    return Response.json({ location: result?.location ?? null });
   } catch (err) {
     console.error("[POST /api/matches/tracking]", err);
     return Response.json({ error: "Failed to update tracking" }, { status: 500 });

@@ -54,8 +54,7 @@ export async function PATCH(request) {
       return Response.json({ error: "id is required" }, { status: 400 });
     }
 
-    const isAdmin = getCanonicalRole(auth.user.role) === "admin";
-    if (!isAdmin && id !== auth.user.sub) {
+    if (id !== auth.user.sub) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -63,19 +62,19 @@ export async function PATCH(request) {
       return Response.json({ error: "full_name is required" }, { status: 400 });
     }
 
-    const normalizedRole = normalizeRole(role);
-    if (!normalizedRole) {
+    const normalizedRole = role ? normalizeRole(role) : null;
+    if (role && !normalizedRole) {
       return Response.json(
         { error: "role must be donor, requester, or hospital" },
         { status: 400 },
       );
     }
 
-    if (!isAdmin && getCanonicalRole(normalizedRole) !== getCanonicalRole(auth.user.role)) {
-      return Response.json({ error: "Role changes require admin access" }, { status: 403 });
+    if (normalizedRole && getCanonicalRole(normalizedRole) !== getCanonicalRole(auth.user.role)) {
+      return Response.json({ error: "Role changes require admin approval" }, { status: 403 });
     }
 
-    if (normalizedRole === "donor" && !blood_type) {
+    if (getCanonicalRole(auth.user.role) === "donor" && !blood_type) {
       return Response.json(
         { error: "blood_type is required for donor role" },
         { status: 400 },
@@ -86,7 +85,7 @@ export async function PATCH(request) {
       id,
       full_name: full_name.trim(),
       phone: phone?.trim() ?? null,
-      role: normalizedRole,
+      role: normalizeRole(auth.user.role) ?? auth.user.role,
       blood_type: blood_type ?? null,
       location: location?.trim() ?? null,
       availability_status: availability_status ? 1 : 0,
@@ -114,7 +113,6 @@ export async function PATCH(request) {
       .update({
         full_name: payload.full_name,
         phone: payload.phone,
-        role: payload.role,
         blood_type: payload.blood_type,
         location: payload.location,
         availability_status: payload.availability_status,

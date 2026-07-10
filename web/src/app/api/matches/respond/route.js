@@ -2,8 +2,12 @@
  * POST /api/matches/respond
  * Body: { match_id: string, decision: 'Accepted' | 'Declined' }
  */
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
-import { requireAuth } from "@/app/api/utils/auth";
+import { createClient } from "@supabase/supabase-js";
+import {
+  createSupabaseServerClient,
+  getSupabaseConfig,
+} from "@/app/api/utils/supabase";
+import { getBearerToken, requireAuth } from "@/app/api/utils/auth";
 import { generateOtp, getOtpTtlMinutes, getOtpTtlSeconds, hashOtp } from "@/app/api/utils/otp";
 import {
   createNotifications,
@@ -14,35 +18,45 @@ function minutesFromNow(n) {
   return new Date(Date.now() + n * 60_000).toISOString();
 }
 
-const DONATION_COOLDOWN_DAYS = 56;
-const MS_PER_DAY = 86_400_000;
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
 
-function cooldownDaysRemaining(lastDonationAt) {
-  if (!lastDonationAt) return 0;
-  const lastDonationTime = new Date(lastDonationAt).getTime();
-  if (!Number.isFinite(lastDonationTime)) return 0;
-  const daysSinceDonation = (Date.now() - lastDonationTime) / MS_PER_DAY;
-  return Math.max(0, Math.ceil(DONATION_COOLDOWN_DAYS - daysSinceDonation));
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
+  }
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
 }
 
-function donorIneligibilityReason(donor) {
-  if (!donor) return "Donor account not found";
-  if (!(donor.availability_status === 1 || donor.availability_status === true)) {
-    return "Donor is not currently available";
+function rpcErrorResponse(error) {
+  const message = error?.message ?? "Failed to update match";
+  if (message.includes("not found")) {
+    return Response.json({ error: message }, { status: 404 });
   }
-  if (!(donor.is_verified === 1 || donor.is_verified === true)) {
-    return "Donor account is not verified";
+  if (message.includes("already") || message.includes("cooldown")) {
+    return Response.json({ error: message }, { status: 409 });
   }
-  if (donor.is_suspended === true) return "Donor account is suspended";
-  if (donor.is_inactive === true) return "Donor account is inactive";
-  if (donor.matching_opt_out === true) return "Donor has opted out of matching";
-
-  const remainingDays = cooldownDaysRemaining(donor.last_donation_at);
-  if (remainingDays > 0) {
-    return `Donor is in the 56-day cooldown period (${remainingDays} day${remainingDays === 1 ? "" : "s"} remaining)`;
+  if (
+    message.includes("not currently available") ||
+    message.includes("not verified") ||
+    message.includes("suspended") ||
+    message.includes("inactive") ||
+    message.includes("opted out")
+  ) {
+    return Response.json({ error: message }, { status: 403 });
   }
-
-  return null;
+  return Response.json({ error: "Failed to update match" }, { status: 500 });
 }
 
 export async function POST(request) {
@@ -63,59 +77,20 @@ export async function POST(request) {
       );
     }
 
+    const userSupabase = createUserSupabaseClient(request);
     const supabase = createSupabaseServerClient();
-    const { data: match, error: matchError } = await supabase
-      .from("matches")
-      .select("*")
-      .eq("id", match_id)
-      .eq("donor_id", auth.user.sub)
-      .maybeSingle();
-
-    if (matchError) throw matchError;
-    if (!match) {
-      return Response.json({ error: "Match not found" }, { status: 404 });
-    }
-    if (match.match_status !== "Alerted") {
-      return Response.json(
-        { error: "Match already responded to" },
-        { status: 409 },
-      );
-    }
-
-    const { data: donor, error: donorError } = await supabase
-      .from("users")
-      .select(
-        "id, availability_status, is_verified, is_suspended, is_inactive, matching_opt_out, last_donation_at",
-      )
-      .eq("id", auth.user.sub)
-      .maybeSingle();
-
-    if (donorError) throw donorError;
-
-    const ineligibilityReason = donorIneligibilityReason(donor);
-    if (ineligibilityReason) {
-      return Response.json({ error: ineligibilityReason }, { status: 403 });
-    }
 
     if (decision === "Declined") {
-      const { error } = await supabase
-        .from("matches")
-        .update({
-          match_status: "Declined",
-          responded_at: new Date().toISOString(),
-        })
-        .eq("id", match_id)
-        .eq("donor_id", auth.user.sub);
+      const { data: result, error } = await userSupabase.rpc("respond_to_match", {
+        p_match_id: match_id,
+        p_decision: decision,
+        p_secure_otp: null,
+        p_expires_at: null,
+      });
 
       if (error) throw error;
 
-      const { data: bloodRequest, error: requestError } = await supabase
-        .from("blood_requests")
-        .select("id, hospital_name, blood_type_needed, requested_by, hospital_id")
-        .eq("id", match.request_id)
-        .single();
-
-      if (requestError) throw requestError;
+      const bloodRequest = result?.request;
 
       await createNotifications(supabase, [
         {
@@ -146,46 +121,17 @@ export async function POST(request) {
     const otp = generateOtp();
     const expiresAt = minutesFromNow(getOtpTtlMinutes());
 
-    const { error: updateMatchError } = await supabase
-      .from("matches")
-      .update({
-        match_status: "Accepted",
-        responded_at: new Date().toISOString(),
-      })
-      .eq("id", match_id)
-      .eq("donor_id", auth.user.sub);
+    const { data: result, error: responseError } = await userSupabase.rpc("respond_to_match", {
+      p_match_id: match_id,
+      p_decision: decision,
+      p_secure_otp: hashOtp(otp),
+      p_expires_at: expiresAt,
+    });
 
-    if (updateMatchError) throw updateMatchError;
+    if (responseError) throw responseError;
 
-    const { data: updatedRequest, error: updateRequestError } = await supabase
-      .from("blood_requests")
-      .update({ status: "donor_matched", matching_status: "accepted" })
-      .eq("id", match.request_id)
-      .select("id, status, matching_status")
-      .single();
-
-    if (updateRequestError) throw updateRequestError;
-
-    const { data: token, error: tokenError } = await supabase
-      .from("verification_tokens")
-      .insert({
-        match_id,
-        secure_otp: hashOtp(otp),
-        expires_at: expiresAt,
-        status: "Active",
-      })
-      .select("id, match_id, expires_at, status")
-      .single();
-
-    if (tokenError) throw tokenError;
-
-    const { data: bloodRequest, error: requestLookupError } = await supabase
-      .from("blood_requests")
-      .select("id, hospital_name, blood_type_needed, requested_by, hospital_id")
-      .eq("id", match.request_id)
-      .single();
-
-    if (requestLookupError) throw requestLookupError;
+    const bloodRequest = result?.request;
+    const token = result?.token;
 
     await createNotifications(supabase, [
       {
@@ -219,10 +165,10 @@ export async function POST(request) {
         tracking: `/matches/${match_id}/tracking`,
         checkin: `/donor/match/${match_id}/checkin`,
       },
-      request: updatedRequest ?? null,
+      request: result?.request ?? null,
     });
   } catch (err) {
     console.error("[POST /api/matches/respond]", err);
-    return Response.json({ error: "Failed to update match" }, { status: 500 });
+    return rpcErrorResponse(err);
   }
 }

@@ -20,7 +20,8 @@ import PrimaryButton from "@/components/ui/PrimaryButton";
 import SecondaryButton from "@/components/ui/SecondaryButton";
 import DonationJourney from "@/components/ui/DonationJourney";
 import { REQUEST_STATUS, useApp } from "@/context/AppContext";
-import { apiGetMatches, apiGetRequest } from "@/utils/api";
+import { apiGetMatches } from "@/utils/api";
+import { supabase } from "@/lib/supabase-client";
 
 const ROLE_HOME_ROUTE = {
   donor: "/donor/home",
@@ -149,9 +150,21 @@ export default function RequestDetailsPage() {
     setRequestNotFound(false);
     setRequestError(null);
 
-    apiGetRequest(requestId)
-      .then(async ({ request: loadedRequest }) => {
+    supabase
+      .from("blood_requests")
+      .select("*")
+      .eq("id", requestId)
+      .maybeSingle()
+      .then(async ({ data: loadedRequest, error }) => {
+        if (error) throw error;
         if (!isActive) return;
+        if (!loadedRequest) {
+          setRequest(null);
+          setRequestMatches([]);
+          setAcceptedMatches([]);
+          setRequestNotFound(true);
+          return;
+        }
         setRequest(normalizeBloodRequest(loadedRequest));
         const { matches } = await apiGetMatches({ request_id: loadedRequest.id });
         if (!isActive) return;

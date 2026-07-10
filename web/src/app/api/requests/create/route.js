@@ -1,5 +1,9 @@
-import { createSupabaseServerClient } from "@/app/api/utils/supabase";
-import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { createClient } from "@supabase/supabase-js";
+import {
+  createSupabaseServerClient,
+  getSupabaseConfig,
+} from "@/app/api/utils/supabase";
+import { getBearerToken, getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 import { createMatchesForRequest } from "@/app/api/utils/matching";
 import { notifyRequestRecipients } from "@/app/api/utils/notifications";
 
@@ -12,46 +16,25 @@ function notificationDeliveryFor(requestType, scheduledFor) {
   return new Date(Math.max(Date.now(), deliverAt)).toISOString();
 }
 
-function shouldRetryLegacyInsert(error) {
-  const message = `${error?.message ?? ""} ${error?.details ?? ""}`.toLowerCase();
-  return (
-    message.includes("column") ||
-    message.includes("schema cache") ||
-    message.includes("constraint") ||
-    message.includes("violates check")
-  );
-}
+function createUserSupabaseClient(request) {
+  const token = getBearerToken(request);
+  const { url, anonKey } = getSupabaseConfig();
 
-async function insertBloodRequest(supabase, payload) {
-  const { data, error } = await supabase
-    .from("blood_requests")
-    .insert(payload)
-    .select("*")
-    .single();
+  if (!url || !anonKey || !token) {
+    throw new Error("Supabase authenticated client configuration is missing");
+  }
 
-  if (!error) return data;
-  if (!shouldRetryLegacyInsert(error)) throw error;
-
-  const {
-    latitude,
-    longitude,
-    hospital_id,
-    status,
-    units_fulfilled,
-    request_type,
-    scheduled_for,
-    matching_status,
-    ...legacyPayload
-  } = payload;
-
-  const { data: legacyData, error: legacyError } = await supabase
-    .from("blood_requests")
-    .insert(legacyPayload)
-    .select("*")
-    .single();
-
-  if (legacyError) throw legacyError;
-  return legacyData;
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
 }
 
 export async function POST(request) {
@@ -125,31 +108,28 @@ export async function POST(request) {
       }
     }
 
-    const assignedHospitalId =
-      role === "hospital_staff" ? auth.user.sub : role === "admin" ? (hospital_id ?? null) : null;
     const scheduledForValue =
       request_type === "Scheduled" ? scheduledForDate.toISOString() : null;
 
-    const supabase = createSupabaseServerClient();
-    const bloodRequest = await insertBloodRequest(supabase, {
-      hospital_name: hospital_name.trim(),
-      patient_ref: patient_ref ?? null,
-      blood_type_needed,
-      urgency_tier,
-      location: location ?? null,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      requested_by: auth.user.sub,
-      hospital_id: assignedHospitalId,
-      units_needed: unitCount,
-      urgency_note: urgency_note ?? null,
-      units_fulfilled: 0,
-      status: "pending",
-      request_type,
-      scheduled_for: scheduledForValue,
-      matching_status: "pending",
+    const userSupabase = createUserSupabaseClient(request);
+    const { data: bloodRequest, error: createError } = await userSupabase.rpc("create_blood_request", {
+      p_hospital_name: hospital_name.trim(),
+      p_blood_type_needed: blood_type_needed,
+      p_urgency_tier: urgency_tier,
+      p_units_needed: unitCount,
+      p_patient_ref: patient_ref ?? null,
+      p_location: location ?? null,
+      p_latitude: latitude ?? null,
+      p_longitude: longitude ?? null,
+      p_urgency_note: urgency_note ?? null,
+      p_hospital_id: role === "admin" ? (hospital_id ?? null) : null,
+      p_request_type: request_type,
+      p_scheduled_for: scheduledForValue,
     });
 
+    if (createError) throw createError;
+
+    const supabase = createSupabaseServerClient();
     const deliverAt = notificationDeliveryFor(request_type, scheduledForValue);
     const sideEffectWarnings = [];
 
@@ -168,17 +148,11 @@ export async function POST(request) {
 
     let matching = { inserted: 0, skipped: true };
     try {
-      matching = await createMatchesForRequest(supabase, bloodRequest, {
+      matching = await createMatchesForRequest(userSupabase, bloodRequest, {
         limit: role === "patient" ? 4 : undefined,
         status: "Candidate",
         notify: false,
       });
-      if (matching.inserted > 0) {
-        await supabase
-          .from("blood_requests")
-          .update({ matching_status: "matched" })
-          .eq("id", bloodRequest.id);
-      }
     } catch (error) {
       console.error("[POST /api/requests/create] matching side effect failed", error);
       sideEffectWarnings.push("matching_failed");

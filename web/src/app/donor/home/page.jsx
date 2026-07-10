@@ -14,6 +14,7 @@ import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import RequestCard from "@/components/ui/RequestCard";
 import { useApp } from "@/context/AppContext";
 import { apiGetMatches } from "@/utils/api";
+import { supabase } from "@/lib/supabase-client";
 import { useNavigate } from "react-router-dom";
 
 function normalizeAssignedMatch(match) {
@@ -81,6 +82,7 @@ export default function DonorHomePage() {
   const [toggling, setToggling] = useState(false);
   const [assignedMatches, setAssignedMatches] = useState([]);
   const [matchesError, setMatchesError] = useState(null);
+  const [rewardPoints, setRewardPoints] = useState(currentUser?.rewardPoints ?? 0);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -104,6 +106,31 @@ export default function DonorHomePage() {
       alive = false;
     };
   }, [isAuthenticated, refreshCurrentUser]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    let alive = true;
+    setRewardPoints(currentUser.rewardPoints ?? 0);
+
+    supabase
+      .from("users")
+      .select("reward_points")
+      .eq("id", currentUser.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) {
+          console.error("[DonorHome] Failed to load reward points:", error);
+          return;
+        }
+        setRewardPoints(Number(data?.reward_points ?? currentUser.rewardPoints ?? 0));
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [currentUser?.id, currentUser?.rewardPoints]);
 
   const handleToggle = async () => {
     if (isCoolingDown) return;
@@ -664,7 +691,7 @@ export default function DonorHomePage() {
                   Points
                 </p>
                 <p style={{ fontSize: "22px", fontWeight: "800", color: "#1A1A1A", margin: 0 }}>
-                  {currentUser.rewardPoints ?? 0}
+                  {rewardPoints}
                 </p>
               </div>
               <div style={{ backgroundColor: "#F8F8F8", borderRadius: "8px", padding: "12px" }}>
