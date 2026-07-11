@@ -815,6 +815,19 @@ export default function RegisterPage() {
 
   const meta = ROLE_META[role];
 
+  const getRegistrationErrorMessage = (error) => {
+    const message =
+      typeof error?.message === "string"
+        ? error.message
+        : "Registration failed. Please try again.";
+
+    if (message.toLowerCase().includes("database error saving new user")) {
+      return "Registration failed while creating your profile. Please apply the latest Supabase migration, then try again.";
+    }
+
+    return message;
+  };
+
   const canProceed = () => {
     if (step === 1) {
       return (
@@ -893,7 +906,7 @@ export default function RegisterPage() {
         },
       });
     } catch (e) {
-      setApiError(e.message ?? "Registration failed. Please try again.");
+      setApiError(getRegistrationErrorMessage(e));
       setSubmitting(false);
       return;
     }

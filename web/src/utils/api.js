@@ -25,7 +25,12 @@ const SAFE_USER_SELECT =
 
 function throwIfSupabaseError(error, fallbackMessage = "Request failed") {
   if (!error) return;
-  const nextError = new Error(error.message ?? fallbackMessage);
+  const rawMessage = error.message ?? error.error_description ?? error.error ?? fallbackMessage;
+  const message =
+    typeof rawMessage === "string"
+      ? rawMessage
+      : fallbackMessage;
+  const nextError = new Error(message);
   nextError.status = error.status;
   nextError.data = error;
   throw nextError;
