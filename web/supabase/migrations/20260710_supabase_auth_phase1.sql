@@ -64,7 +64,7 @@ begin
     create policy users_select_own_profile
       on public.users
       for select
-      using (id = auth.uid()::text);
+      using (id = auth.uid());
   end if;
 
   if not exists (
@@ -76,8 +76,8 @@ begin
     create policy users_update_own_profile
       on public.users
       for update
-      using (id = auth.uid()::text)
-      with check (id = auth.uid()::text);
+      using (id = auth.uid())
+      with check (id = auth.uid());
   end if;
 end $$;
 

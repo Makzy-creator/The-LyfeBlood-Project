@@ -18,6 +18,38 @@
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
+import { supabase } from "@/lib/supabase-client";
+
+const SAFE_USER_SELECT =
+  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at";
+
+function throwIfSupabaseError(error, fallbackMessage = "Request failed") {
+  if (!error) return;
+  const nextError = new Error(error.message ?? fallbackMessage);
+  nextError.status = error.status;
+  nextError.data = error;
+  throw nextError;
+}
+
+async function loadUserProfile(userId) {
+  if (!userId) {
+    throw new Error("User session is missing");
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .select(SAFE_USER_SELECT)
+    .eq("id", userId)
+    .maybeSingle();
+
+  throwIfSupabaseError(error, "Failed to load profile");
+  if (!data) {
+    throw new Error("Account profile was not created. Please contact support or try again after verifying your email.");
+  }
+
+  return data;
+}
+
 // ── Backend selector ──────────────────────────────────────────────────────────
 const BASE_URL =
   process.env.NEXT_PUBLIC_WORKER_URL ?? // Cloudflare Worker (external)
@@ -77,10 +109,46 @@ async function apiFetch(path, options = {}) {
  * @returns {{ user, message }}
  */
 export async function apiRegister(payload) {
-  return apiFetch("/api/auth/register", {
-    method: "POST",
-    body: JSON.stringify(payload),
+  const { data, error } = await supabase.auth.signUp({
+    email: payload.email,
+    password: payload.password,
+    options: {
+      data: {
+        full_name: payload.full_name,
+        phone: payload.phone,
+        role: payload.role,
+        blood_type: payload.blood_type,
+        location: payload.location,
+        availability_status: 0,
+        is_verified: 0,
+      },
+    },
   });
+
+  throwIfSupabaseError(error, "Registration failed");
+
+  if (data?.user && !data?.session) {
+    return {
+      user: null,
+      token: null,
+      session: null,
+      requiresEmailConfirmation: true,
+      email: data.user.email ?? payload.email,
+      message: "Check your email to verify your account before signing in.",
+    };
+  }
+
+  const user = data?.user
+    ? await loadUserProfile(data.user.id)
+    : null;
+
+  return {
+    user,
+    token: data?.session?.access_token ?? null,
+    session: data?.session ?? null,
+    requiresEmailConfirmation: false,
+    message: "Registration successful",
+  };
 }
 
 /**
@@ -89,14 +157,26 @@ export async function apiRegister(payload) {
  * @returns {{ user, message }}
  */
 export async function apiLogin(payload) {
-  return apiFetch("/api/auth/login", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  const { data, error } = await supabase.auth.signInWithPassword(payload);
+  throwIfSupabaseError(error, "Sign-in failed");
+
+  const user = await loadUserProfile(data.user?.id);
+
+  return {
+    user,
+    token: data.session?.access_token ?? null,
+    session: data.session ?? null,
+    message: "Login successful",
+  };
 }
 
 export async function apiGetProfile() {
-  return apiFetch("/api/profile");
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  throwIfSupabaseError(sessionError, "Failed to restore session");
+
+  const authUser = sessionData?.session?.user ?? null;
+  const user = await loadUserProfile(authUser?.id);
+  return { user };
 }
 
 /**
@@ -105,10 +185,23 @@ export async function apiGetProfile() {
  * @returns {{ user, message }}
  */
 export async function apiUpdateProfile(payload) {
-  return apiFetch("/api/profile", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
+  const safePayload = {
+    full_name: payload.full_name,
+    phone: payload.phone ?? null,
+    blood_type: payload.blood_type ?? null,
+    location: payload.location ?? null,
+    availability_status: payload.availability_status ? 1 : 0,
+  };
+
+  const { data, error } = await supabase
+    .from("users")
+    .update(safePayload)
+    .eq("id", payload.id)
+    .select(SAFE_USER_SELECT)
+    .maybeSingle();
+
+  throwIfSupabaseError(error, "Failed to update profile");
+  return { user: data, message: "Profile updated" };
 }
 
 // ── Blood Requests ────────────────────────────────────────────────────────────
@@ -152,10 +245,7 @@ export async function apiUpdateRequestStatus(payload) {
  * @returns {{ request, message }}
  */
 export async function apiCreateRequest(payload) {
-  return apiFetch("/api/requests/create", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("create_blood_request", payload);
 }
 
 // ── Matches ───────────────────────────────────────────────────────────────────
@@ -179,17 +269,11 @@ export async function apiGetMatch(matchId) {
 }
 
 export async function apiRespondToMatch(payload) {
-  return apiFetch("/api/matches/respond", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("respond_to_match", payload);
 }
 
 export async function apiSendMatches(payload) {
-  return apiFetch("/api/matches/send", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("send_matches", payload);
 }
 
 export async function apiGetMatchChat(matchId) {
@@ -198,10 +282,7 @@ export async function apiGetMatchChat(matchId) {
 }
 
 export async function apiSendMatchChatMessage(payload) {
-  return apiFetch("/api/matches/chat", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("send_match_chat_message", payload);
 }
 
 export async function apiGetMatchTracking(matchId) {
@@ -210,10 +291,7 @@ export async function apiGetMatchTracking(matchId) {
 }
 
 export async function apiUpdateMatchTracking(payload) {
-  return apiFetch("/api/matches/tracking", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("update_match_tracking", payload);
 }
 
 // ── Check-in Tokens ───────────────────────────────────────────────────────────
@@ -225,17 +303,11 @@ export async function apiUpdateMatchTracking(payload) {
  * @returns {{ message, token_id, request_id, checked_in_at, verified_by, new_status }}
  */
 export async function apiVerifyToken(payload) {
-  return apiFetch("/api/tokens/verify", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("verify_token", payload);
 }
 
 export async function apiUpdateHospitalMatchStatus(payload) {
-  return apiFetch("/api/matches/hospital-status", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("update_hospital_match_status", payload);
 }
 
 // ── Notifications ────────────────────────────────────────────────────────────
@@ -249,10 +321,7 @@ export async function apiGetNotifications(params = {}) {
 }
 
 export async function apiUpdateNotifications(payload = {}) {
-  return apiFetch("/api/notifications", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
+  return supabase.rpc("update_notifications", payload);
 }
 
 export default {

@@ -865,7 +865,7 @@ export default function RegisterPage() {
     setSubmitting(true);
     setApiError(null);
     try {
-      const { session } = await apiRegister({
+      const { session, requiresEmailConfirmation, email: registeredEmail } = await apiRegister({
         full_name: form.fullName,
         email: form.email,
         phone: form.phone,
@@ -886,7 +886,12 @@ export default function RegisterPage() {
           refresh_token: session.refresh_token,
         });
       }
-      navigate("/register/confirmation");
+      navigate("/register/confirmation", {
+        state: {
+          requiresEmailConfirmation,
+          email: registeredEmail ?? form.email,
+        },
+      });
     } catch (e) {
       setApiError(e.message ?? "Registration failed. Please try again.");
       setSubmitting(false);

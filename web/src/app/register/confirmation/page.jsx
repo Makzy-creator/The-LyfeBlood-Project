@@ -1,8 +1,13 @@
 "use client";
 import { CheckCircle2, Heart } from "lucide-react";
 import PrimaryButton from "@/components/ui/PrimaryButton";
+import { useLocation } from "react-router-dom";
 
 export default function RegistrationConfirmationPage() {
+  const location = useLocation();
+  const requiresEmailConfirmation = Boolean(location.state?.requiresEmailConfirmation);
+  const email = location.state?.email;
+
   return (
     <>
       <div
@@ -68,7 +73,7 @@ export default function RegistrationConfirmationPage() {
             margin: "0 0 10px",
           }}
         >
-          You're All Set!
+          {requiresEmailConfirmation ? "Check Your Email" : "You're All Set!"}
         </h1>
         <p
           style={{
@@ -80,8 +85,9 @@ export default function RegistrationConfirmationPage() {
             maxWidth: "300px",
           }}
         >
-          Your LyfeBlood account has been created. You can now respond to urgent
-          blood requests and help save lives across Imo State.
+          {requiresEmailConfirmation
+            ? `We sent a verification link${email ? ` to ${email}` : ""}. Please verify your email before signing in.`
+            : "Your LyfeBlood account has been created. You can now respond to urgent blood requests and help save lives across Imo State."}
         </p>
 
         {/* ── IMPACT CARD ────────────────────────────────────────────── */}
@@ -112,16 +118,16 @@ export default function RegistrationConfirmationPage() {
           </p>
           {[
             {
-              label: "Identity Verification",
+              label: requiresEmailConfirmation ? "Email Verification" : "Identity Verification",
               value: "Under Review (24–48h)",
               color: "#F39C12",
               bg: "#FEF9C3",
             },
             {
               label: "Profile Visibility",
-              value: "Active",
-              color: "#1E8449",
-              bg: "#D5F5E3",
+              value: requiresEmailConfirmation ? "Pending" : "Active",
+              color: requiresEmailConfirmation ? "#F39C12" : "#1E8449",
+              bg: requiresEmailConfirmation ? "#FEF9C3" : "#D5F5E3",
             },
             {
               label: "Notifications",
