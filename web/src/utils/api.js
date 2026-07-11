@@ -114,46 +114,10 @@ async function apiFetch(path, options = {}) {
  * @returns {{ user, message }}
  */
 export async function apiRegister(payload) {
-  const { data, error } = await supabase.auth.signUp({
-    email: payload.email,
-    password: payload.password,
-    options: {
-      data: {
-        full_name: payload.full_name,
-        phone: payload.phone,
-        role: payload.role,
-        blood_type: payload.blood_type,
-        location: payload.location,
-        availability_status: 0,
-        is_verified: 0,
-      },
-    },
+  return apiFetch("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
-
-  throwIfSupabaseError(error, "Registration failed");
-
-  if (data?.user && !data?.session) {
-    return {
-      user: null,
-      token: null,
-      session: null,
-      requiresEmailConfirmation: true,
-      email: data.user.email ?? payload.email,
-      message: "Check your email to verify your account before signing in.",
-    };
-  }
-
-  const user = data?.user
-    ? await loadUserProfile(data.user.id)
-    : null;
-
-  return {
-    user,
-    token: data?.session?.access_token ?? null,
-    session: data?.session ?? null,
-    requiresEmailConfirmation: false,
-    message: "Registration successful",
-  };
 }
 
 /**

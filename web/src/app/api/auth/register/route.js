@@ -16,6 +16,18 @@ function normalizeRole(role) {
   return ["donor", "requester", "hospital"].includes(role) ? role : null;
 }
 
+function getErrorMessage(error, fallback = "Registration failed") {
+  const message = error?.message ?? error?.error_description ?? error?.error;
+  return typeof message === "string" && message.trim() ? message : fallback;
+}
+
+function getCreateUserStatus(error) {
+  const message = getErrorMessage(error, "").toLowerCase();
+  if (message.includes("already") || message.includes("duplicate")) return 409;
+  if (message.includes("database error")) return 500;
+  return 400;
+}
+
 function buildUserPayload({ userId, fullName, email, phone, role, bloodType, location }) {
   return {
     id: userId,
@@ -72,10 +84,8 @@ export async function POST(request) {
     });
 
     if (createError) {
-      const status = createError.message?.toLowerCase().includes("already")
-        ? 409
-        : 400;
-      return Response.json({ error: createError.message }, { status });
+      const status = getCreateUserStatus(createError);
+      return Response.json({ error: getErrorMessage(createError) }, { status });
     }
 
     const authUser = created.user;
@@ -97,7 +107,10 @@ export async function POST(request) {
       .single();
 
     if (profileError) {
-      throw profileError;
+      return Response.json(
+        { error: getErrorMessage(profileError, "Account was created, but profile setup failed") },
+        { status: 500 },
+      );
     }
 
     const authClient = createSupabaseAuthClient();
@@ -116,12 +129,14 @@ export async function POST(request) {
         user,
         session: sessionData.session,
         token: sessionData.session?.access_token ?? null,
+        requiresEmailConfirmation: false,
+        email: normalizedEmail,
         message: "Registration successful",
       },
       { status: 201 },
     );
   } catch (err) {
     console.error("[POST /api/auth/register]", err);
-    return Response.json({ error: "Registration failed" }, { status: 500 });
+    return Response.json({ error: getErrorMessage(err) }, { status: 500 });
   }
 }
