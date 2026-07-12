@@ -1,11 +1,7 @@
 {
+  "$schema": "https://json.schemastore.org/vercel",
   "buildCommand": "npm run build",
   "outputDirectory": "build/client",
-  "functions": {
-    "api/index.js": {
-      "runtime": "nodejs22.x"
-    }
-  },
   "rewrites": [
     {
       "source": "/assets/(.*)",
