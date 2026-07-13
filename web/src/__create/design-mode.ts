@@ -3,7 +3,7 @@
  * from DOM elements.
  */
 
-import { initDesignMode } from '../../../shared/design-mode';
+const initDesignMode = (_getStyleInfo: GetStyleInfo) => () => {};
 
 type GetStyleInfo = (resolved: { element: Element }) => {
   className: string;

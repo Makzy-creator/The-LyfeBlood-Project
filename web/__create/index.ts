@@ -94,8 +94,8 @@ for (const method of ['post', 'put', 'patch'] as const) {
 app.use(
   '*',
   initAuthConfig((c) => {
-      const authSecret = c.env.AUTH_SECRET ?? process.env.AUTH_SECRET ?? 'dev-auth-secret-change-me';
-      const authUrl = c.env.AUTH_URL ?? process.env.AUTH_URL ?? process.env.NEXT_PUBLIC_CREATE_BASE_URL ?? 'http://localhost:4000';
+      const authSecret = c.env?.AUTH_SECRET ?? process.env.AUTH_SECRET ?? 'dev-auth-secret-change-me';
+      const authUrl = c.env?.AUTH_URL ?? process.env.AUTH_URL ?? process.env.NEXT_PUBLIC_CREATE_BASE_URL ?? 'http://localhost:4000';
       const secureCookies = authUrl.startsWith('https://');
 
       return {
