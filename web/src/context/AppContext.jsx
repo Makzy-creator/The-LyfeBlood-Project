@@ -5,10 +5,13 @@ import {
   apiDeleteRequest,
   apiGetNotifications,
   apiGetProfile,
+  apiLogout,
+  apiRestoreSession,
   apiUpdateNotifications,
   apiUpdateRequestStatus,
 } from "@/utils/api";
 import { supabase } from "@/lib/supabase-client";
+import { serializeBloodTypes } from "@/utils/bloodTypes";
 
 // ─── PERSONA DEFINITIONS ─────────────────────────────────────────────────────
 // ─── BLOOD GROUPS ─────────────────────────────────────────────────────────────
@@ -32,7 +35,7 @@ const AUTH_TOKEN_STORAGE_KEY = "lyfeblood.auth.token";
 
 function canUseStorage() {
   try {
-    return typeof window !== "undefined" && !!window.localStorage;
+    return typeof window !== "undefined" && !!window.sessionStorage;
   } catch {
     return false;
   }
@@ -41,12 +44,12 @@ function canUseStorage() {
 function getInitialUser() {
   if (!canUseStorage()) return null;
   try {
-    const stored = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    const stored = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
+    const token = window.sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
     return stored && token ? JSON.parse(stored) : null;
   } catch {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     return null;
   }
 }
@@ -234,8 +237,8 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     setUnreadCount(0);
     setDonorAvailable(user.isAvailable);
     if (canUseStorage()) {
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-      if (token) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+      window.sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+      if (token) window.sessionStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
     }
     refreshBloodRequests().catch((error) => {
       console.error("[AppContext] Failed to refresh blood requests after login:", error);
@@ -245,7 +248,11 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     });
   }, [refreshBloodRequests, refreshNotifications]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    await apiLogout();
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+
     setCurrentUser(null);
     setIsAuthenticated(false);
     setActiveNav("home");
@@ -253,12 +260,9 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     setNotifications([]);
     setUnreadCount(0);
     if (canUseStorage()) {
-      window.localStorage.removeItem(AUTH_STORAGE_KEY);
-      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
     }
-    supabase.auth.signOut().catch((error) => {
-      console.error("[AppContext] Failed to sign out of Supabase:", error);
-    });
   }, []);
 
   const updateCurrentUser = useCallback((nextUser) => {
@@ -266,7 +270,7 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
     setCurrentUser(normalized);
     setDonorAvailable(normalized.isAvailable);
     if (canUseStorage()) {
-      window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalized));
+      window.sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalized));
     }
   }, []);
 
@@ -279,28 +283,29 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
   useEffect(() => {
     let active = true;
 
-    async function applySession(session) {
-      if (!session?.access_token || !canUseStorage()) return;
-      window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, session.access_token);
+    async function applySession(payload) {
+      if (!payload?.token || !payload?.user || !canUseStorage()) return;
+      window.sessionStorage.setItem(AUTH_TOKEN_STORAGE_KEY, payload.token);
       try {
-        const { user } = await apiGetProfile();
         if (!active) return;
-        updateCurrentUser(user);
+        updateCurrentUser(payload.user);
         setIsAuthenticated(true);
       } catch (error) {
         console.error("[AppContext] Failed to restore Supabase session:", error);
       }
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      applySession(data?.session);
-    });
+    if (!getInitialUser()) {
+      apiRestoreSession()
+        .then(applySession)
+        .catch(() => {});
+    }
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         if (canUseStorage()) {
-          window.localStorage.removeItem(AUTH_STORAGE_KEY);
-          window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+          window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+          window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
         }
         setCurrentUser(null);
         setIsAuthenticated(false);
@@ -308,7 +313,11 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
       }
 
       if (session?.access_token) {
-        applySession(session);
+        apiGetProfile()
+          .then(({ user }) => applySession({ user, token: session.access_token }))
+          .catch((error) => {
+            console.error("[AppContext] Failed to apply Supabase session:", error);
+          });
       }
     });
 
@@ -359,13 +368,12 @@ const [isAuthenticated, setIsAuthenticated] = useState(() => {
   const addRequest = useCallback(async (newRequest) => {
     const { request } = await apiCreateRequest({
       hospital_name: newRequest.hospitalName,
-      blood_type_needed: newRequest.bloodGroup,
+      blood_type_needed: serializeBloodTypes(newRequest.bloodGroup),
       urgency_tier: newRequest.tier === "sos" ? "SOS" : "Standard",
       units_needed: newRequest.unitsNeeded,
       patient_ref: newRequest.patientCode ?? newRequest.ward ?? null,
       location: newRequest.location ?? null,
       urgency_note: newRequest.urgencyNote ?? null,
-      requested_by: newRequest.requestedBy ?? null,
       request_type: newRequest.requestType ?? "Emergency",
       scheduled_for: newRequest.scheduledFor ?? null,
     });

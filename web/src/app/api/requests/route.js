@@ -7,6 +7,7 @@
 import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
 import { createNotifications, requestRecipientIds } from "@/app/api/utils/notifications";
+import { requestIncludesBloodType } from "@/utils/bloodTypes";
 
 const VALID_STATUSES = [
   "pending",
@@ -76,6 +77,7 @@ export async function GET(request) {
       .order("created_at", { ascending: false });
 
     const role = getCanonicalRole(auth.user.role);
+    let compatibleRequestTypes = [];
     if (role === "donor") {
       const { data: donor, error: donorError } = await supabase
         .from("users")
@@ -85,14 +87,12 @@ export async function GET(request) {
 
       if (donorError) throw donorError;
 
-      const compatibleRequestTypes = REQUEST_TYPES_BY_DONOR[donor?.blood_type] ?? [];
+      compatibleRequestTypes = REQUEST_TYPES_BY_DONOR[donor?.blood_type] ?? [];
       if (!compatibleRequestTypes.length) {
         return Response.json({ requests: [] });
       }
 
-      query = query
-        .neq("status", "fulfilled")
-        .in("blood_type_needed", compatibleRequestTypes);
+      query = query.neq("status", "fulfilled");
     }
     if (role === "patient") {
       query = query.eq("requested_by", auth.user.sub);
@@ -101,22 +101,31 @@ export async function GET(request) {
       query = query.or(`requested_by.eq.${auth.user.sub},hospital_id.eq.${auth.user.sub}`);
     }
 
-    if (bloodFilter) {
-      query = query.eq("blood_type_needed", bloodFilter);
-    }
-
-    const { data, error } = await query.limit(limit);
+    const queryLimit = role === "donor" || bloodFilter ? 100 : limit;
+    const { data, error } = await query.limit(queryLimit);
 
     if (error) {
       throw error;
     }
 
-    const requests = (data ?? []).sort((a, b) => {
+    const filteredData = (data ?? []).filter((bloodRequest) => {
+      if (role === "donor") {
+        return compatibleRequestTypes.some((type) =>
+          requestIncludesBloodType(bloodRequest.blood_type_needed, type),
+        );
+      }
+      if (bloodFilter) {
+        return requestIncludesBloodType(bloodRequest.blood_type_needed, bloodFilter);
+      }
+      return true;
+    });
+
+    const requests = filteredData.sort((a, b) => {
       const aPriority = sortPriority(a?.urgency_tier);
       const bPriority = sortPriority(b?.urgency_tier);
       if (aPriority !== bPriority) return aPriority - bPriority;
       return new Date(b?.created_at ?? 0).getTime() - new Date(a?.created_at ?? 0).getTime();
-    });
+    }).slice(0, limit);
 
     return Response.json({ requests });
   } catch (err) {

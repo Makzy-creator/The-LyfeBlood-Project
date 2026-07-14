@@ -11,7 +11,9 @@ import { cors } from 'hono/cors';
 import { proxy } from 'hono/proxy';
 import { bodyLimit } from 'hono/body-limit';
 import { requestId } from 'hono/request-id';
-import { createHonoServer } from 'react-router-hono-server/cloudflare';
+import { createRequestHandler } from 'react-router';
+// @ts-expect-error Virtual module supplied by the React Router Vite plugin.
+import * as reactRouterBuild from 'virtual:react-router/server-build';
 import { serializeError } from 'serialize-error';
 import ws from 'ws';
 import NeonAdapter from './adapter';
@@ -306,7 +308,11 @@ app.use('/api/auth/*', async (c, next) => {
 });
 app.route(API_BASENAME, api);
 
-export default await createHonoServer({
-  app,
-  defaultLogger: false,
-});
+const reactRouterHandler = createRequestHandler(
+  reactRouterBuild,
+  process.env.NODE_ENV === 'development' ? 'development' : 'production'
+);
+
+app.all('*', (c) => reactRouterHandler(c.req.raw, {}));
+
+export default app;

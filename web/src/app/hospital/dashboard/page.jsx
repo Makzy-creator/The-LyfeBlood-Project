@@ -35,14 +35,14 @@ function canDeleteRequest(request) {
 // ─── NEW REQUEST MODAL SHEET ──────────────────────────────────────────────────
 function NewRequestSheet({ onClose, onSubmit, isSOS }) {
   const [form, setForm] = useState({
-    bloodGroup: "",
+    bloodGroups: [],
     ward: "",
     unitsNeeded: 1,
     urgencyNote: "",
     patientCode: "",
   });
 
-  const canSubmit = form.bloodGroup && form.ward && form.unitsNeeded >= 1;
+  const canSubmit = form.bloodGroups.length > 0 && form.ward && form.unitsNeeded >= 1;
 
   const inputStyle = {
     width: "100%",
@@ -200,18 +200,25 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
                 <button
                   key={g}
                   type="button"
-                  onClick={() => setForm((f) => ({ ...f, bloodGroup: g }))}
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      bloodGroups: f.bloodGroups.includes(g)
+                        ? f.bloodGroups.filter((group) => group !== g)
+                        : [...f.bloodGroups, g],
+                    }))
+                  }
                   style={{
                     background: "none",
-                    border: `2px solid ${form.bloodGroup === g ? "#C0392B" : "#C8C8C8"}`,
+                    border: `2px solid ${form.bloodGroups.includes(g) ? "#C0392B" : "#C8C8C8"}`,
                     borderRadius: "8px",
                     padding: 0,
                     cursor: "pointer",
                     outline: "none",
                     transform:
-                      form.bloodGroup === g ? "scale(1.06)" : "scale(1)",
+                      form.bloodGroups.includes(g) ? "scale(1.06)" : "scale(1)",
                     boxShadow:
-                      form.bloodGroup === g ? "0 0 0 3px #FADBD8" : "none",
+                      form.bloodGroups.includes(g) ? "0 0 0 3px #FADBD8" : "none",
                     transition: "all 150ms",
                   }}
                 >
@@ -219,6 +226,14 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
                 </button>
               ))}
             </div>
+            {form.bloodGroups.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "12px", color: "#6B6B6B", fontWeight: "700" }}>
+                  Selected:
+                </span>
+                <BloodGroupTag group={form.bloodGroups} size="sm" />
+              </div>
+            )}
           </div>
 
           {/* Ward */}
@@ -408,7 +423,7 @@ export default function HospitalDashboardPage() {
   const handleNewRequest = async (formData) => {
     await addRequest({
       tier: formData.isSOS ? "sos" : "standard",
-      bloodGroup: formData.bloodGroup,
+      bloodGroup: formData.bloodGroups,
       unitsNeeded: formData.unitsNeeded,
       unitsFulfilled: 0,
       hospitalName: currentUser?.hospital || "Federal Medical Centre Owerri",

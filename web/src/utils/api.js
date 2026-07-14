@@ -67,7 +67,7 @@ const AUTH_TOKEN_STORAGE_KEY = "lyfeblood.auth.token";
 function getStoredAuthToken() {
   try {
     return typeof window !== "undefined"
-      ? window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+      ? window.sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
       : null;
   } catch {
     return null;
@@ -78,6 +78,7 @@ async function apiFetch(path, options = {}) {
   const url = `${BASE_URL}${path}`;
   const token = getStoredAuthToken();
   const response = await fetch(url, {
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -122,30 +123,28 @@ export async function apiRegister(payload) {
 
 /**
  * Log in with email + password.
- * @param {{ email, password }} payload
+ * @param {{ email, password, rememberMe?: boolean }} payload
  * @returns {{ user, message }}
  */
 export async function apiLogin(payload) {
-  const { data, error } = await supabase.auth.signInWithPassword(payload);
-  throwIfSupabaseError(error, "Sign-in failed");
+  return apiFetch("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
 
-  const user = await loadUserProfile(data.user?.id);
+export async function apiRestoreSession() {
+  return apiFetch("/api/auth/session");
+}
 
-  return {
-    user,
-    token: data.session?.access_token ?? null,
-    session: data.session ?? null,
-    message: "Login successful",
-  };
+export async function apiLogout() {
+  return apiFetch("/api/auth/logout", {
+    method: "POST",
+  });
 }
 
 export async function apiGetProfile() {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  throwIfSupabaseError(sessionError, "Failed to restore session");
-
-  const authUser = sessionData?.session?.user ?? null;
-  const user = await loadUserProfile(authUser?.id);
-  return { user };
+  return apiFetch("/api/profile");
 }
 
 /**
@@ -209,19 +208,22 @@ export async function apiUpdateRequestStatus(payload) {
  * Create a new blood request.
  * @param {{
  *   hospital_name, blood_type_needed, urgency_tier,
- *   units_needed?, patient_ref?, location?, urgency_note?, requested_by?
+ *   units_needed?, patient_ref?, location?, urgency_note?
  * }} payload
  * @returns {{ request, message }}
  */
 export async function apiCreateRequest(payload) {
-  return supabase.rpc("create_blood_request", payload);
+  return apiFetch("/api/requests/create", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 // ── Matches ───────────────────────────────────────────────────────────────────
 
 /**
  * Accept or decline a donor–request match.
- * @param {{ match_id: string, decision: 'Accepted' | 'Declined' }} payload
+ * @param {{ request_id: string, decision: 'Accepted' | 'Declined' }} payload
  * @returns {{ message, status, otp?, expires_at?, token_id? }}
  */
 export async function apiGetMatches(params = {}) {
@@ -238,7 +240,10 @@ export async function apiGetMatch(matchId) {
 }
 
 export async function apiRespondToMatch(payload) {
-  return supabase.rpc("respond_to_match", payload);
+  return apiFetch("/api/matches/respond", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function apiSendMatches(payload) {
@@ -296,6 +301,8 @@ export async function apiUpdateNotifications(payload = {}) {
 export default {
   register: apiRegister,
   login: apiLogin,
+  restoreSession: apiRestoreSession,
+  logout: apiLogout,
   getProfile: apiGetProfile,
   updateProfile: apiUpdateProfile,
   getRequests: apiGetRequests,

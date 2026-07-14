@@ -1,8 +1,12 @@
 /**
  * POST /api/auth/login
- * Body: { email, password }
- * Returns: { user, session, token, message }
+ * Body: { email, password, rememberMe? }
+ * Returns: { user, token, expires_at, message }
  */
+import {
+  buildClearRememberSessionCookie,
+  buildRememberSessionCookie,
+} from "@/app/api/auth/session-cookie";
 import {
   createSupabaseAuthClient,
   createSupabaseServerClient,
@@ -15,7 +19,7 @@ const USER_SELECT =
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { email, password } = body;
+    const { email, password, rememberMe } = body;
 
     if (!email?.trim() || !password)
       return Response.json(
@@ -50,12 +54,21 @@ export async function POST(request) {
       return Response.json({ error: "Profile not found" }, { status: 404 });
     }
 
-    return Response.json({
-      user,
-      session: authData.session,
-      token: authData.session.access_token,
-      message: "Login successful",
-    });
+    return Response.json(
+      {
+        user,
+        token: authData.session.access_token,
+        expires_at: authData.session.expires_at ?? null,
+        message: "Login successful",
+      },
+      {
+        headers: {
+          "Set-Cookie": rememberMe
+            ? buildRememberSessionCookie(request, authData.session.refresh_token)
+            : buildClearRememberSessionCookie(request),
+        },
+      },
+    );
   } catch (err) {
     console.error("[POST /api/auth/login]", err);
     return Response.json({ error: "Login failed" }, { status: 500 });

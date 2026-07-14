@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/app/api/utils/supabase";
 import { getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { requestIncludesBloodType } from "@/utils/bloodTypes";
 
 const DELETE_AFTER_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TYPES_BY_DONOR = {
@@ -45,7 +46,9 @@ async function donorCanReadCompatibleRequest(supabase, bloodRequest, donorId) {
   if (error) throw error;
 
   const compatibleRequestTypes = REQUEST_TYPES_BY_DONOR[donor?.blood_type] ?? [];
-  return compatibleRequestTypes.includes(bloodRequest.blood_type_needed);
+  return compatibleRequestTypes.some((type) =>
+    requestIncludesBloodType(bloodRequest.blood_type_needed, type),
+  );
 }
 
 export async function GET(request, context = {}) {

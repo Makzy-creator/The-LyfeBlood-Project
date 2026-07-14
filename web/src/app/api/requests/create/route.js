@@ -1,11 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  createSupabaseAuthClient,
   createSupabaseServerClient,
   getSupabaseConfig,
 } from "@/app/api/utils/supabase";
-import { getBearerToken, getCanonicalRole, requireAuth } from "@/app/api/utils/auth";
+import { getBearerToken, getCanonicalRole, hasRole } from "@/app/api/utils/auth";
 import { createMatchesForRequest } from "@/app/api/utils/matching";
 import { notifyRequestRecipients } from "@/app/api/utils/notifications";
+import { normalizeBloodTypes, serializeBloodTypes } from "@/utils/bloodTypes";
 
 const VALID_TIERS = ["Standard", "Urgent", "SOS"];
 const VALID_REQUEST_TYPES = ["Scheduled", "Emergency"];
@@ -37,17 +39,85 @@ function createUserSupabaseClient(request) {
   });
 }
 
+async function getRequestCreator(request) {
+  const token = getBearerToken(request);
+  if (!token) {
+    return {
+      error: Response.json(
+        { error: "Unauthorized. Please sign in to create a blood request." },
+        { status: 401 },
+      ),
+      user: null,
+    };
+  }
+
+  const authClient = createSupabaseAuthClient();
+  const { data: authData, error: authError } = await authClient.auth.getUser(token);
+  const authUser = authData?.user;
+  if (authError || !authUser?.id) {
+    return {
+      error: Response.json(
+        { error: "Unauthorized. Please sign in to create a blood request." },
+        { status: 401 },
+      ),
+      user: null,
+    };
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data: profile, error: profileError } = await supabase
+    .from("users")
+    .select("id, email, role")
+    .eq("id", authUser.id)
+    .maybeSingle();
+
+  if (profileError) throw profileError;
+  if (!profile) {
+    return {
+      error: Response.json(
+        {
+          error:
+            "Your patient/family profile is missing. Please complete registration or contact support before creating a request.",
+        },
+        { status: 409 },
+      ),
+      user: null,
+    };
+  }
+
+  const claims = {
+    sub: authUser.id,
+    email: authUser.email ?? profile.email ?? null,
+    role: profile.role,
+  };
+
+  if (!hasRole(claims, ["patient", "hospital_staff", "admin"])) {
+    return {
+      error: Response.json({ error: "Forbidden" }, { status: 403 }),
+      user: null,
+    };
+  }
+
+  return { error: null, user: claims };
+}
+
 export async function POST(request) {
   try {
-    const auth = await requireAuth(request, ["patient", "hospital_staff", "admin"]);
+    const auth = await getRequestCreator(request);
     if (auth.error) return auth.error;
 
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    }
+
     const {
       hospital_name,
       blood_type_needed,
       urgency_tier,
-      units_needed = 1,
+      units_needed,
       patient_ref,
       location,
       latitude,
@@ -61,8 +131,13 @@ export async function POST(request) {
     if (!hospital_name?.trim()) {
       return Response.json({ error: "hospital_name is required" }, { status: 400 });
     }
-    if (!blood_type_needed) {
+    const selectedBloodTypes = normalizeBloodTypes(blood_type_needed);
+    const serializedBloodTypes = serializeBloodTypes(selectedBloodTypes);
+    if (!serializedBloodTypes) {
       return Response.json({ error: "blood_type_needed is required" }, { status: 400 });
+    }
+    if (units_needed == null) {
+      return Response.json({ error: "units_needed is required" }, { status: 400 });
     }
     if (!VALID_TIERS.includes(urgency_tier)) {
       return Response.json(
@@ -78,6 +153,12 @@ export async function POST(request) {
     }
 
     const role = getCanonicalRole(auth.user.role);
+    if (role === "patient" && selectedBloodTypes.length > 1) {
+      return Response.json(
+        { error: "Patient requests can include only one blood type" },
+        { status: 400 },
+      );
+    }
     const unitCount = Number(units_needed);
     if (!Number.isInteger(unitCount) || unitCount < 1) {
       return Response.json(
@@ -114,7 +195,7 @@ export async function POST(request) {
     const userSupabase = createUserSupabaseClient(request);
     const { data: bloodRequest, error: createError } = await userSupabase.rpc("create_blood_request", {
       p_hospital_name: hospital_name.trim(),
-      p_blood_type_needed: blood_type_needed,
+      p_blood_type_needed: serializedBloodTypes,
       p_urgency_tier: urgency_tier,
       p_units_needed: unitCount,
       p_patient_ref: patient_ref ?? null,
@@ -128,6 +209,19 @@ export async function POST(request) {
     });
 
     if (createError) throw createError;
+    if (!bloodRequest || typeof bloodRequest !== "object") {
+      throw new Error("create_blood_request returned no request");
+    }
+    if (String(bloodRequest.requested_by) !== String(auth.user.sub)) {
+      console.error("[POST /api/requests/create] created request owner mismatch", {
+        expected: auth.user.sub,
+        actual: bloodRequest.requested_by,
+      });
+      return Response.json(
+        { error: "Created request ownership could not be verified" },
+        { status: 500 },
+      );
+    }
 
     const supabase = createSupabaseServerClient();
     const deliverAt = notificationDeliveryFor(request_type, scheduledForValue);

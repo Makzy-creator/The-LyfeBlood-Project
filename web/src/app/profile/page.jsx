@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, ChevronLeft, CheckCircle2, Droplets, User } from "lucide-react";
+import { AlertTriangle, ChevronLeft, CheckCircle2, Droplets, LogOut, User } from "lucide-react";
 import TopAppBar from "@/components/ui/TopAppBar";
 import BottomNavBar from "@/components/ui/BottomNavBar";
 import PrimaryButton from "@/components/ui/PrimaryButton";
@@ -48,9 +48,11 @@ function Field({ label, children }) {
 }
 
 export default function ProfilePage() {
-  const { currentUser, isAuthenticated, updateCurrentUser, markAllNotificationsRead } = useApp();
+  const { currentUser, isAuthenticated, updateCurrentUser, markAllNotificationsRead, logout } = useApp();
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const logoutInFlightRef = useRef(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(false);
   const [successMessage, setSuccessMessage] = useState("Profile updated.");
@@ -140,6 +142,23 @@ export default function ProfilePage() {
       setError(e?.message ?? "Failed to update profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (logoutInFlightRef.current) return;
+    logoutInFlightRef.current = true;
+    setLoggingOut(true);
+    setError(null);
+    setDone(false);
+    try {
+      await logout();
+      navigate("/login", { replace: true });
+    } catch (e) {
+      setError(e?.message ?? "Failed to log out. Please try again.");
+    } finally {
+      logoutInFlightRef.current = false;
+      setLoggingOut(false);
     }
   };
 
@@ -409,6 +428,14 @@ export default function ProfilePage() {
                 {saving ? "Saving..." : "Save Changes"}
               </PrimaryButton>
             </div>
+
+            <SecondaryButton
+              onClick={handleLogout}
+              disabled={loggingOut}
+              icon={LogOut}
+            >
+              {loggingOut ? "Logging out..." : "Logout"}
+            </SecondaryButton>
           </div>
         </div>
       </div>
