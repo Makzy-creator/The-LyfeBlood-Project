@@ -17,7 +17,6 @@ import BloodGroupTag from "@/components/ui/BloodGroupTag";
 import DonationJourney from "@/components/ui/DonationJourney";
 import { useApp } from "@/context/AppContext";
 import { apiGetMatch, apiRespondToMatch } from "@/utils/api";
-import { formatBloodTypes } from "@/utils/bloodTypes";
 
 const DONATION_COOLDOWN_DAYS = 56;
 const MS_PER_DAY = 86_400_000;
@@ -298,7 +297,6 @@ export default function MatchPage({ params }) {
   const [declining, setDeclining] = useState(false);
   const [declined, setDeclined] = useState(false);
   const [respondError, setRespondError] = useState(null);
-  const [respondSuccess, setRespondSuccess] = useState(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !isAuthenticated) {
@@ -352,13 +350,9 @@ export default function MatchPage({ params }) {
   const handleAccept = async () => {
     setResponding(true);
     setRespondError(null);
-    setRespondSuccess(null);
     try {
-      if (!match?.requestId) {
-        throw new Error("Request ID is missing. Please refresh and try again.");
-      }
       const response = await apiRespondToMatch({
-        request_id: match.requestId,
+        match_id: matchId,
         decision: "Accepted",
       });
       if (!response?.otp || !response?.expires_at) {
@@ -382,15 +376,10 @@ export default function MatchPage({ params }) {
           JSON.stringify(response.unlocked_routes ?? {}),
         );
       }
-      setMatch((current) => current ? { ...current, status: "Accepted" } : current);
-      setRespondSuccess(response.message ?? "Request accepted. Opening tracking...");
-      dismissMatchAlert();
-      await new Promise((r) => setTimeout(r, 700));
       if (typeof window !== "undefined") {
         window.location.href = `/matches/${matchId}/tracking`;
       }
     } catch (error) {
-      console.error("[DonorMatch] Failed to accept request:", error);
       setRespondError(error?.message ?? "Unable to accept this request");
     } finally {
       setResponding(false);
@@ -400,19 +389,13 @@ export default function MatchPage({ params }) {
   const handleDecline = async () => {
     setDeclining(true);
     setRespondError(null);
-    setRespondSuccess(null);
     try {
-      if (!match?.requestId) {
-        throw new Error("Request ID is missing. Please refresh and try again.");
-      }
-      await apiRespondToMatch({ request_id: match.requestId, decision: "Declined" });
-      setRespondSuccess("Request declined. Returning home...");
+      await apiRespondToMatch({ match_id: matchId, decision: "Declined" });
       setDeclined(true);
       dismissMatchAlert();
       await new Promise((r) => setTimeout(r, 800));
       if (typeof window !== "undefined") window.location.href = "/donor/home";
     } catch (error) {
-      console.error("[DonorMatch] Failed to decline request:", error);
       setRespondError(error?.message ?? "Unable to decline this request");
     } finally {
       setDeclining(false);
@@ -560,7 +543,7 @@ export default function MatchPage({ params }) {
                 margin: "0 0 1px",
               }}
             >
-              You have been matched for a {formatBloodTypes(match.bloodGroup)} request
+              You have been matched for a {match.bloodGroup} request
             </p>
             <p
               style={{
@@ -862,22 +845,6 @@ export default function MatchPage({ params }) {
               >
                 {responding ? "Accepting..." : "Accept This Request"}
               </PrimaryButton>
-            )}
-            {respondSuccess && (
-              <p
-                style={{
-                  backgroundColor: "#D5F5E3",
-                  borderRadius: "8px",
-                  color: "#1E8449",
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  margin: 0,
-                  padding: "10px 12px",
-                  textAlign: "center",
-                }}
-              >
-                {respondSuccess}
-              </p>
             )}
             {match.status === "Alerted" && isCoolingDown && (
               <p

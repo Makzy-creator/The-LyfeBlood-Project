@@ -15,6 +15,7 @@ import {
 import PrimaryButton from "@/components/ui/PrimaryButton";
 import { useApp } from "@/context/AppContext";
 import { apiLogin } from "@/utils/api";
+import { supabase } from "@/lib/supabase-client";
 
 // ── Role definitions — NO mock data, NO fake names ────────────────────────────
 
@@ -50,7 +51,6 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
@@ -65,11 +65,14 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const { user, token } = await apiLogin({
-        email: email.trim(),
-        password,
-        rememberMe,
-      });
+      const { user, token, session } = await apiLogin({ email: email.trim(), password });
+
+      if (session?.access_token && session?.refresh_token) {
+        await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        });
+      }
 
       // Persist real user in global context
       login({ user, token });
@@ -277,31 +280,6 @@ export default function LoginPage() {
             </div>
 
             {/* ── ERROR BANNER (inside form so it stays near the fields) ── */}
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                color: "#4A4A4A",
-                fontSize: "14px",
-                fontWeight: "600",
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  accentColor,
-                  cursor: "pointer",
-                }}
-              />
-              Remember me
-            </label>
-
             {error && (
               <div
                 style={{

@@ -1,6 +1,6 @@
 /**
  * POST /api/matches/respond
- * Body: { request_id: string, decision: 'Accepted' | 'Declined' }
+ * Body: { match_id: string, decision: 'Accepted' | 'Declined' }
  */
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -16,18 +16,6 @@ import {
 
 function minutesFromNow(n) {
   return new Date(Date.now() + n * 60_000).toISOString();
-}
-
-async function readJsonBody(request) {
-  try {
-    return { body: await request.json(), error: null };
-  } catch (error) {
-    console.error("[POST /api/matches/respond] Invalid JSON body", error);
-    return {
-      body: null,
-      error: Response.json({ error: "Invalid JSON body" }, { status: 400 }),
-    };
-  }
 }
 
 function createUserSupabaseClient(request) {
@@ -71,70 +59,16 @@ function rpcErrorResponse(error) {
   return Response.json({ error: "Failed to update match" }, { status: 500 });
 }
 
-async function resolveDonorMatch(supabase, { requestId, matchId, donorId }) {
-  if (!requestId && !matchId) {
-    return {
-      error: Response.json({ error: "request_id is required" }, { status: 400 }),
-      match: null,
-    };
-  }
-
-  let query = supabase
-    .from("matches")
-    .select("id, request_id, donor_id, match_status")
-    .eq("donor_id", donorId);
-
-  query = requestId
-    ? query.eq("request_id", requestId)
-    : query.eq("id", matchId);
-
-  const { data, error } = await query.limit(1);
-  if (error) throw error;
-
-  const match = Array.isArray(data) ? data[0] : data;
-  if (!match) {
-    return {
-      error: Response.json(
-        { error: "Request not found or not assigned to this donor" },
-        { status: 404 },
-      ),
-      match: null,
-    };
-  }
-
-  if (match.match_status !== "Alerted") {
-    return {
-      error: Response.json(
-        { error: "Match already responded to" },
-        { status: 409 },
-      ),
-      match: null,
-    };
-  }
-
-  return { error: null, match };
-}
-
-function getReturnedRequest(result) {
-  const bloodRequest = result?.request;
-  if (!bloodRequest?.id) {
-    throw new Error("Match response did not return request details");
-  }
-  return bloodRequest;
-}
-
 export async function POST(request) {
   try {
     const auth = await requireAuth(request, ["donor"]);
     if (auth.error) return auth.error;
 
-    const { body, error: bodyError } = await readJsonBody(request);
-    if (bodyError) return bodyError;
+    const body = await request.json();
+    const { match_id, decision } = body;
 
-    const { request_id, match_id, decision } = body ?? {};
-
-    if (!request_id && !match_id) {
-      return Response.json({ error: "request_id is required" }, { status: 400 });
+    if (!match_id) {
+      return Response.json({ error: "match_id is required" }, { status: 400 });
     }
     if (!["Accepted", "Declined"].includes(decision)) {
       return Response.json(
@@ -145,18 +79,10 @@ export async function POST(request) {
 
     const userSupabase = createUserSupabaseClient(request);
     const supabase = createSupabaseServerClient();
-    const { error: matchError, match } = await resolveDonorMatch(supabase, {
-      requestId: request_id,
-      matchId: match_id,
-      donorId: auth.user.sub,
-    });
-
-    if (matchError) return matchError;
-    const resolvedMatchId = match.id;
 
     if (decision === "Declined") {
       const { data: result, error } = await userSupabase.rpc("respond_to_match", {
-        p_match_id: resolvedMatchId,
+        p_match_id: match_id,
         p_decision: decision,
         p_secure_otp: null,
         p_expires_at: null,
@@ -164,7 +90,7 @@ export async function POST(request) {
 
       if (error) throw error;
 
-      const bloodRequest = getReturnedRequest(result);
+      const bloodRequest = result?.request;
 
       await createNotifications(supabase, [
         {
@@ -173,7 +99,7 @@ export async function POST(request) {
           title: "Match declined",
           message: `You declined the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
           request_id: bloodRequest.id,
-          match_id: resolvedMatchId,
+          match_id,
         },
         ...requestRecipientIds(bloodRequest).map((userId) => ({
           user_id: userId,
@@ -181,14 +107,13 @@ export async function POST(request) {
           title: "Donor declined",
           message: `A donor declined the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
           request_id: bloodRequest.id,
-          match_id: resolvedMatchId,
+          match_id,
         })),
       ]);
 
       return Response.json({
         message: "Match declined",
-        request_id: bloodRequest.id,
-        match_id: resolvedMatchId,
+        match_id,
         status: "Declined",
       });
     }
@@ -197,7 +122,7 @@ export async function POST(request) {
     const expiresAt = minutesFromNow(getOtpTtlMinutes());
 
     const { data: result, error: responseError } = await userSupabase.rpc("respond_to_match", {
-      p_match_id: resolvedMatchId,
+      p_match_id: match_id,
       p_decision: decision,
       p_secure_otp: hashOtp(otp),
       p_expires_at: expiresAt,
@@ -205,7 +130,7 @@ export async function POST(request) {
 
     if (responseError) throw responseError;
 
-    const bloodRequest = getReturnedRequest(result);
+    const bloodRequest = result?.request;
     const token = result?.token;
 
     await createNotifications(supabase, [
@@ -215,7 +140,7 @@ export async function POST(request) {
         title: "Match accepted",
         message: `You accepted the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
         request_id: bloodRequest.id,
-        match_id: resolvedMatchId,
+        match_id,
       },
       ...requestRecipientIds(bloodRequest).map((userId) => ({
         user_id: userId,
@@ -223,23 +148,22 @@ export async function POST(request) {
         title: "Donor accepted",
         message: `A donor accepted the ${bloodRequest.blood_type_needed} request at ${bloodRequest.hospital_name}.`,
         request_id: bloodRequest.id,
-        match_id: resolvedMatchId,
+        match_id,
       })),
     ]);
 
     return Response.json({
       message: "Match accepted",
-      request_id: bloodRequest.id,
-      match_id: resolvedMatchId,
+      match_id,
       status: "Accepted",
       otp,
       expires_at: expiresAt,
       otp_ttl_seconds: getOtpTtlSeconds(),
       token_id: token?.id ?? null,
       unlocked_routes: {
-        chat: `/matches/${resolvedMatchId}/chat`,
-        tracking: `/matches/${resolvedMatchId}/tracking`,
-        checkin: `/donor/match/${resolvedMatchId}/checkin`,
+        chat: `/matches/${match_id}/chat`,
+        tracking: `/matches/${match_id}/tracking`,
+        checkin: `/donor/match/${match_id}/checkin`,
       },
       request: result?.request ?? null,
     });

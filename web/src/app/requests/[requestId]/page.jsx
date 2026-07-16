@@ -22,7 +22,6 @@ import DonationJourney from "@/components/ui/DonationJourney";
 import { REQUEST_STATUS, useApp } from "@/context/AppContext";
 import { apiGetMatches } from "@/utils/api";
 import { supabase } from "@/lib/supabase-client";
-import { formatBloodTypes } from "@/utils/bloodTypes";
 
 const ROLE_HOME_ROUTE = {
   donor: "/donor/home",
@@ -355,7 +354,6 @@ export default function RequestDetailsPage() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
               <DetailRow label="Units" value={`${request.unitsFulfilled}/${request.unitsNeeded}`} />
-              <DetailRow label="Blood Types" value={formatBloodTypes(request.bloodGroup)} />
               <DetailRow label="Priority" value={request.tier === "sos" ? "SOS" : "Standard"} />
               <DetailRow label="Case Ref" value={request.patientCode} />
               <DetailRow label="Location" value={request.location} />
