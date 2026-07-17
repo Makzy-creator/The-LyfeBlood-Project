@@ -35,17 +35,33 @@ for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
   };
 }
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error(
-    'DATABASE_URL is required for Neon-backed auth, request creation, match response, and token verification routes.'
-  );
+let cachedAdapter: any = null;
+
+function getAdapter() {
+  if (cachedAdapter) return cachedAdapter;
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error(
+      'DATABASE_URL is required for Neon-backed auth, request creation, match response, and token verification routes.'
+    );
+  }
+  const pool = new Pool({
+    connectionString: databaseUrl,
+  });
+  cachedAdapter = NeonAdapter(pool);
+  return cachedAdapter;
 }
 
-const pool = new Pool({
-  connectionString: databaseUrl,
+const adapter = new Proxy({} as any, {
+  get(target, prop) {
+    const activeAdapter = getAdapter();
+    const value = Reflect.get(activeAdapter, prop);
+    if (typeof value === 'function') {
+      return value.bind(activeAdapter);
+    }
+    return value;
+  }
 });
-const adapter = NeonAdapter(pool);
 
 const app = new Hono();
 
