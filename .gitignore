@@ -1,3 +1,16 @@
-node_modules
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+
+
+# React Router
+/.react-router/
+/build/
 .vercel
 .env*
+
+# Tooling caches
+/.vite/
+/.vitest/
