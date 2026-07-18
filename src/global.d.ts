@@ -1,17 +1,17 @@
-import 'react-router';
+import 'react-router'
 declare module 'virtual:load-fonts.jsx' {
-	export function LoadFonts(): null;
+  export function LoadFonts(): null
 }
 declare module 'react-router' {
-	interface AppLoadContext {
-		// add context properties here
-	}
+  interface AppLoadContext {
+    // add context properties here
+  }
 }
 declare module 'npm:stripe' {
-	import Stripe from 'stripe';
-	export default Stripe;
+  import Stripe from 'stripe'
+  export default Stripe
 }
 declare module '@auth/create/react' {
-	import { SessionProvider } from '@auth/react';
-	export { SessionProvider };
+  import { SessionProvider } from '@auth/react'
+  export { SessionProvider }
 }

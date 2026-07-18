@@ -18,92 +18,98 @@
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-import { supabase } from "@/lib/supabase-client";
+import { supabase } from '@/lib/supabase-client'
 
 const SAFE_USER_SELECT =
-  "id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at";
+  'id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at'
 
-function throwIfSupabaseError(error, fallbackMessage = "Request failed") {
-  if (!error) return;
-  const rawMessage = error.message ?? error.error_description ?? error.error ?? fallbackMessage;
-  const message =
-    typeof rawMessage === "string"
-      ? rawMessage
-      : fallbackMessage;
-  const nextError = new Error(message);
-  nextError.status = error.status;
-  nextError.data = error;
-  throw nextError;
+function throwIfSupabaseError(error, fallbackMessage = 'Request failed') {
+  if (!error) return
+  const rawMessage = error.message ?? error.error_description ?? error.error ?? fallbackMessage
+  const message = typeof rawMessage === 'string' ? rawMessage : fallbackMessage
+  const nextError = new Error(message)
+  nextError.status = error.status
+  nextError.data = error
+  throw nextError
 }
 
 async function loadUserProfile(userId) {
   if (!userId) {
-    throw new Error("User session is missing");
+    throw new Error('User session is missing')
   }
 
   const { data, error } = await supabase
-    .from("users")
+    .from('users')
     .select(SAFE_USER_SELECT)
-    .eq("id", userId)
-    .maybeSingle();
+    .eq('id', userId)
+    .maybeSingle()
 
-  throwIfSupabaseError(error, "Failed to load profile");
+  throwIfSupabaseError(error, 'Failed to load profile')
   if (!data) {
-    throw new Error("Account profile was not created. Please contact support or try again after verifying your email.");
+    throw new Error(
+      'Account profile was not created. Please contact support or try again after verifying your email.'
+    )
   }
 
-  return data;
+  return data
 }
 
 // ── Backend selector ──────────────────────────────────────────────────────────
 const BASE_URL =
   process.env.NEXT_PUBLIC_WORKER_URL ?? // Cloudflare Worker (external)
-  ""; // Next.js routes (same origin — default)
+  '' // Next.js routes (same origin — default)
 
 // ── Low-level fetch wrapper ───────────────────────────────────────────────────
 
-const AUTH_TOKEN_STORAGE_KEY = "lyfeblood.auth.token";
+const AUTH_TOKEN_STORAGE_KEY = 'lyfeblood.auth.token'
 
 function getStoredAuthToken() {
   try {
-    return typeof window !== "undefined"
-      ? window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
-      : null;
+    return typeof window !== 'undefined'
+      ? window.sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+      : null
   } catch {
-    return null;
+    return null
   }
 }
 
 async function apiFetch(path, options = {}) {
-  const url = `${BASE_URL}${path}`;
-  const token = getStoredAuthToken();
+  const url = `${BASE_URL}${path}`
+  const token = getStoredAuthToken()
   const response = await fetch(url, {
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers ?? {}),
     },
     ...options,
-  });
+  })
 
-  let data;
+  let data
   try {
-    data = await response.json();
+    data = await response.json()
   } catch {
-    data = { error: "Invalid JSON response from server" };
+    data = { error: 'Invalid JSON response from server' }
   }
 
   if (!response.ok) {
-    const message =
-      data?.error ??
-      `Request failed: ${response.status} ${response.statusText}`;
-    const error = new Error(message);
-    error.status = response.status;
-    error.data = data;
-    throw error;
+    if (response.status === 401) {
+      try {
+        window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+        window.sessionStorage.removeItem('lyfeblood.auth.user')
+        window.sessionStorage.removeItem('lyfeblood.auth.token')
+      } catch {
+        /* storage unavailable */
+      }
+    }
+    const message = data?.error ?? `Request failed: ${response.status} ${response.statusText}`
+    const error = new Error(message)
+    error.status = response.status
+    error.data = data
+    throw error
   }
 
-  return data;
+  return data
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -114,10 +120,10 @@ async function apiFetch(path, options = {}) {
  * @returns {{ user, message }}
  */
 export async function apiRegister(payload) {
-  return apiFetch("/api/auth/register", {
-    method: "POST",
+  return apiFetch('/api/auth/register', {
+    method: 'POST',
     body: JSON.stringify(payload),
-  });
+  })
 }
 
 /**
@@ -126,26 +132,26 @@ export async function apiRegister(payload) {
  * @returns {{ user, message }}
  */
 export async function apiLogin(payload) {
-  const { data, error } = await supabase.auth.signInWithPassword(payload);
-  throwIfSupabaseError(error, "Sign-in failed");
+  const { data, error } = await supabase.auth.signInWithPassword(payload)
+  throwIfSupabaseError(error, 'Sign-in failed')
 
-  const user = await loadUserProfile(data.user?.id);
+  const user = await loadUserProfile(data.user?.id)
 
   return {
     user,
     token: data.session?.access_token ?? null,
     session: data.session ?? null,
-    message: "Login successful",
-  };
+    message: 'Login successful',
+  }
 }
 
 export async function apiGetProfile() {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  throwIfSupabaseError(sessionError, "Failed to restore session");
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+  throwIfSupabaseError(sessionError, 'Failed to restore session')
 
-  const authUser = sessionData?.session?.user ?? null;
-  const user = await loadUserProfile(authUser?.id);
-  return { user };
+  const authUser = sessionData?.session?.user ?? null
+  const user = await loadUserProfile(authUser?.id)
+  return { user }
 }
 
 /**
@@ -160,17 +166,17 @@ export async function apiUpdateProfile(payload) {
     blood_type: payload.blood_type ?? null,
     location: payload.location ?? null,
     availability_status: payload.availability_status ? 1 : 0,
-  };
+  }
 
   const { data, error } = await supabase
-    .from("users")
+    .from('users')
     .update(safePayload)
-    .eq("id", payload.id)
+    .eq('id', payload.id)
     .select(SAFE_USER_SELECT)
-    .maybeSingle();
+    .maybeSingle()
 
-  throwIfSupabaseError(error, "Failed to update profile");
-  return { user: data, message: "Profile updated" };
+  throwIfSupabaseError(error, 'Failed to update profile')
+  return { user: data, message: 'Profile updated' }
 }
 
 // ── Blood Requests ────────────────────────────────────────────────────────────
@@ -181,28 +187,28 @@ export async function apiUpdateProfile(payload) {
  * @returns {{ requests: BloodRequest[] }}
  */
 export async function apiGetRequests(params = {}) {
-  const qs = new URLSearchParams();
-  if (params.blood_type) qs.set("blood_type", params.blood_type);
-  if (params.limit) qs.set("limit", String(params.limit));
-  const query = qs.toString() ? `?${qs}` : "";
-  return apiFetch(`/api/requests${query}`);
+  const qs = new URLSearchParams()
+  if (params.blood_type) qs.set('blood_type', params.blood_type)
+  if (params.limit) qs.set('limit', String(params.limit))
+  const query = qs.toString() ? `?${qs}` : ''
+  return apiFetch(`/api/requests${query}`)
 }
 
 export async function apiGetRequest(requestId) {
-  return apiFetch(`/api/requests/${encodeURIComponent(requestId)}`);
+  return apiFetch(`/api/requests/${encodeURIComponent(requestId)}`)
 }
 
 export async function apiDeleteRequest(requestId) {
   return apiFetch(`/api/requests/${encodeURIComponent(requestId)}`, {
-    method: "DELETE",
-  });
+    method: 'DELETE',
+  })
 }
 
 export async function apiUpdateRequestStatus(payload) {
-  return apiFetch("/api/requests", {
-    method: "PATCH",
+  return apiFetch('/api/requests', {
+    method: 'PATCH',
     body: JSON.stringify(payload),
-  });
+  })
 }
 
 /**
@@ -214,7 +220,7 @@ export async function apiUpdateRequestStatus(payload) {
  * @returns {{ request, message }}
  */
 export async function apiCreateRequest(payload) {
-  return supabase.rpc("create_blood_request", payload);
+  return supabase.rpc('create_blood_request', payload)
 }
 
 // ── Matches ───────────────────────────────────────────────────────────────────
@@ -225,42 +231,42 @@ export async function apiCreateRequest(payload) {
  * @returns {{ message, status, otp?, expires_at?, token_id? }}
  */
 export async function apiGetMatches(params = {}) {
-  const qs = new URLSearchParams();
-  if (params.id) qs.set("id", params.id);
-  if (params.request_id) qs.set("request_id", params.request_id);
-  const query = qs.toString() ? `?${qs}` : "";
-  return apiFetch(`/api/matches${query}`);
+  const qs = new URLSearchParams()
+  if (params.id) qs.set('id', params.id)
+  if (params.request_id) qs.set('request_id', params.request_id)
+  const query = qs.toString() ? `?${qs}` : ''
+  return apiFetch(`/api/matches${query}`)
 }
 
 export async function apiGetMatch(matchId) {
-  const { matches } = await apiGetMatches({ id: matchId });
-  return { match: matches?.[0] ?? null };
+  const { matches } = await apiGetMatches({ id: matchId })
+  return { match: matches?.[0] ?? null }
 }
 
 export async function apiRespondToMatch(payload) {
-  return supabase.rpc("respond_to_match", payload);
+  return supabase.rpc('respond_to_match', payload)
 }
 
 export async function apiSendMatches(payload) {
-  return supabase.rpc("send_matches", payload);
+  return supabase.rpc('send_matches', payload)
 }
 
 export async function apiGetMatchChat(matchId) {
-  const qs = new URLSearchParams({ match_id: matchId });
-  return apiFetch(`/api/matches/chat?${qs.toString()}`);
+  const qs = new URLSearchParams({ match_id: matchId })
+  return apiFetch(`/api/matches/chat?${qs.toString()}`)
 }
 
 export async function apiSendMatchChatMessage(payload) {
-  return supabase.rpc("send_match_chat_message", payload);
+  return supabase.rpc('send_match_chat_message', payload)
 }
 
 export async function apiGetMatchTracking(matchId) {
-  const qs = new URLSearchParams({ match_id: matchId });
-  return apiFetch(`/api/matches/tracking?${qs.toString()}`);
+  const qs = new URLSearchParams({ match_id: matchId })
+  return apiFetch(`/api/matches/tracking?${qs.toString()}`)
 }
 
 export async function apiUpdateMatchTracking(payload) {
-  return supabase.rpc("update_match_tracking", payload);
+  return supabase.rpc('update_match_tracking', payload)
 }
 
 // ── Check-in Tokens ───────────────────────────────────────────────────────────
@@ -272,25 +278,25 @@ export async function apiUpdateMatchTracking(payload) {
  * @returns {{ message, token_id, request_id, checked_in_at, verified_by, new_status }}
  */
 export async function apiVerifyToken(payload) {
-  return supabase.rpc("verify_token", payload);
+  return supabase.rpc('verify_token', payload)
 }
 
 export async function apiUpdateHospitalMatchStatus(payload) {
-  return supabase.rpc("update_hospital_match_status", payload);
+  return supabase.rpc('update_hospital_match_status', payload)
 }
 
 // ── Notifications ────────────────────────────────────────────────────────────
 
 export async function apiGetNotifications(params = {}) {
-  const qs = new URLSearchParams();
-  if (params.limit) qs.set("limit", String(params.limit));
-  if (params.unread) qs.set("unread", "true");
-  const query = qs.toString() ? `?${qs}` : "";
-  return apiFetch(`/api/notifications${query}`);
+  const qs = new URLSearchParams()
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.unread) qs.set('unread', 'true')
+  const query = qs.toString() ? `?${qs}` : ''
+  return apiFetch(`/api/notifications${query}`)
 }
 
 export async function apiUpdateNotifications(payload = {}) {
-  return supabase.rpc("update_notifications", payload);
+  return supabase.rpc('update_notifications', payload)
 }
 
 export default {
@@ -311,4 +317,4 @@ export default {
   updateHospitalMatchStatus: apiUpdateHospitalMatchStatus,
   getNotifications: apiGetNotifications,
   updateNotifications: apiUpdateNotifications,
-};
+}

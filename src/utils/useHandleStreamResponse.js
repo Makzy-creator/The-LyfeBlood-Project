@@ -1,36 +1,33 @@
-import * as React from 'react';
+import * as React from 'react'
 
-function useHandleStreamResponse({
-  onChunk,
-  onFinish
-}) {
+function useHandleStreamResponse({ onChunk, onFinish }) {
   const handleStreamResponse = React.useCallback(
     async (response) => {
       if (response.body) {
-        const reader = response.body.getReader();
+        const reader = response.body.getReader()
         if (reader) {
-          const decoder = new TextDecoder();
-          let content = "";
+          const decoder = new TextDecoder()
+          let content = ''
           while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await reader.read()
             if (done) {
-              onFinish(content);
-              break;
+              onFinish(content)
+              break
             }
-            const chunk = decoder.decode(value, { stream: true });
-            content += chunk;
-            onChunk(content);
+            const chunk = decoder.decode(value, { stream: true })
+            content += chunk
+            onChunk(content)
           }
         }
       }
     },
     [onChunk, onFinish]
-  );
-  const handleStreamResponseRef = React.useRef(handleStreamResponse);
+  )
+  const handleStreamResponseRef = React.useRef(handleStreamResponse)
   React.useEffect(() => {
-    handleStreamResponseRef.current = handleStreamResponse;
-  }, [handleStreamResponse]);
-  return React.useCallback((response) => handleStreamResponseRef.current(response), []); 
+    handleStreamResponseRef.current = handleStreamResponse
+  }, [handleStreamResponse])
+  return React.useCallback((response) => handleStreamResponseRef.current(response), [])
 }
 
-export default useHandleStreamResponse;
+export default useHandleStreamResponse

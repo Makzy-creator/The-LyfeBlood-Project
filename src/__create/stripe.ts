@@ -1,18 +1,18 @@
-import lodash from 'lodash';
-const { partial } = lodash;
-import regularStripe from 'npm:stripe';
-import type Stripe from 'stripe';
+import lodash from 'lodash'
+const { partial } = lodash
+import regularStripe from 'npm:stripe'
+import type Stripe from 'stripe'
 
-const env = process.env;
+const env = process.env
 
 class StripeError extends Error {
-  type: string;
-  param: string;
+  type: string
+  param: string
 
   constructor(message: string, type: string, param: string) {
-    super(message);
-    this.type = type;
-    this.param = param;
+    super(message)
+    this.type = type
+    this.param = param
   }
 }
 
@@ -56,13 +56,13 @@ type SupportedStripeParams =
   | Stripe.RefundCreateParams
   | Stripe.RefundListParams
   | Stripe.WebhookEndpointCreateParams
-  | { id: string };
+  | { id: string }
 
 interface MakeStripeRequestParams<T extends SupportedStripeParams> {
-  path: string;
-  projectGroupId: string;
-  token: string;
-  params: T;
+  path: string
+  projectGroupId: string
+  token: string
+  params: T
 }
 
 async function makeStripeRequest<T extends SupportedStripeParams>({
@@ -82,16 +82,16 @@ async function makeStripeRequest<T extends SupportedStripeParams>({
       params,
       environment: 'DEVELOPMENT',
     }),
-  });
-  const data = await result.json();
+  })
+  const data = await result.json()
   if (!result.ok) {
     if (data.error) {
-      const { message, type, param } = data.error;
-      throw new StripeError(message, type, param);
+      const { message, type, param } = data.error
+      throw new StripeError(message, type, param)
     }
-    throw new Error('An error occurred');
+    throw new Error('An error occurred')
   }
-  return data;
+  return data
 }
 
 async function createCheckoutSession(
@@ -104,8 +104,8 @@ async function createCheckoutSession(
     token,
     projectGroupId,
     params,
-  });
-  return { url: data.url };
+  })
+  return { url: data.url }
 }
 
 async function listCheckoutSessions(
@@ -118,8 +118,8 @@ async function listCheckoutSessions(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getCheckoutSession(projectGroupId: string, token: string, id: string) {
@@ -128,8 +128,8 @@ async function getCheckoutSession(projectGroupId: string, token: string, id: str
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updateCheckoutSession(
@@ -143,8 +143,8 @@ async function updateCheckoutSession(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function expireCheckoutSession(
@@ -158,8 +158,8 @@ async function expireCheckoutSession(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function listCheckoutSessionLineItems(
@@ -173,8 +173,8 @@ async function listCheckoutSessionLineItems(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createProduct(
@@ -187,8 +187,8 @@ async function createProduct(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listProducts(
@@ -201,8 +201,8 @@ async function listProducts(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getProduct(projectGroupId: string, token: string, id: string) {
@@ -211,8 +211,8 @@ async function getProduct(projectGroupId: string, token: string, id: string) {
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updateProduct(
@@ -226,8 +226,8 @@ async function updateProduct(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function deleteProduct(projectGroupId: string, token: string, id: string) {
@@ -236,8 +236,8 @@ async function deleteProduct(projectGroupId: string, token: string, id: string) 
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createPrice(
@@ -250,8 +250,8 @@ async function createPrice(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listPrices(
@@ -264,8 +264,8 @@ async function listPrices(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getPrice(projectGroupId: string, token: string, id: string) {
@@ -274,8 +274,8 @@ async function getPrice(projectGroupId: string, token: string, id: string) {
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updatePrice(
@@ -289,8 +289,8 @@ async function updatePrice(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createCustomer(
@@ -303,8 +303,8 @@ async function createCustomer(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listCustomers(
@@ -317,8 +317,8 @@ async function listCustomers(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getCustomer(
@@ -335,8 +335,8 @@ async function getCustomer(
       id,
       params,
     },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createPaymentIntent(
@@ -349,8 +349,8 @@ async function createPaymentIntent(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listPaymentIntents(
@@ -363,8 +363,8 @@ async function listPaymentIntents(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getPaymentIntent(projectGroupId: string, token: string, id: string) {
@@ -373,8 +373,8 @@ async function getPaymentIntent(projectGroupId: string, token: string, id: strin
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updatePaymentIntent(
@@ -388,8 +388,8 @@ async function updatePaymentIntent(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function confirmPaymentIntent(
@@ -403,8 +403,8 @@ async function confirmPaymentIntent(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function cancelPaymentIntent(projectGroupId: string, token: string, id: string) {
@@ -413,8 +413,8 @@ async function cancelPaymentIntent(projectGroupId: string, token: string, id: st
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createSubscription(
@@ -427,8 +427,8 @@ async function createSubscription(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listSubscriptions(
@@ -441,8 +441,8 @@ async function listSubscriptions(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getSubscription(projectGroupId: string, token: string, id: string) {
@@ -451,8 +451,8 @@ async function getSubscription(projectGroupId: string, token: string, id: string
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updateSubscription(
@@ -466,8 +466,8 @@ async function updateSubscription(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function cancelSubscription(projectGroupId: string, token: string, id: string) {
@@ -476,8 +476,8 @@ async function cancelSubscription(projectGroupId: string, token: string, id: str
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createInvoice(
@@ -490,8 +490,8 @@ async function createInvoice(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listInvoices(
@@ -504,8 +504,8 @@ async function listInvoices(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getInvoice(projectGroupId: string, token: string, id: string) {
@@ -514,8 +514,8 @@ async function getInvoice(projectGroupId: string, token: string, id: string) {
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updateInvoice(
@@ -529,8 +529,8 @@ async function updateInvoice(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function finalizeInvoice(
@@ -544,8 +544,8 @@ async function finalizeInvoice(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function payInvoice(
@@ -559,8 +559,8 @@ async function payInvoice(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function voidInvoice(
@@ -574,8 +574,8 @@ async function voidInvoice(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createPaymentMethod(
@@ -588,8 +588,8 @@ async function createPaymentMethod(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listPaymentMethods(
@@ -602,8 +602,8 @@ async function listPaymentMethods(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getPaymentMethod(projectGroupId: string, token: string, id: string) {
@@ -612,8 +612,8 @@ async function getPaymentMethod(projectGroupId: string, token: string, id: strin
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function attachPaymentMethod(
@@ -627,8 +627,8 @@ async function attachPaymentMethod(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function detachPaymentMethod(
@@ -642,8 +642,8 @@ async function detachPaymentMethod(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createCharge(
@@ -656,8 +656,8 @@ async function createCharge(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listCharges(
@@ -670,8 +670,8 @@ async function listCharges(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getCharge(projectGroupId: string, token: string, id: string) {
@@ -680,8 +680,8 @@ async function getCharge(projectGroupId: string, token: string, id: string) {
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function updateCharge(
@@ -695,8 +695,8 @@ async function updateCharge(
     token,
     projectGroupId,
     params: { id, ...params },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createRefund(
@@ -709,8 +709,8 @@ async function createRefund(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function listRefunds(
@@ -723,8 +723,8 @@ async function listRefunds(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 async function getRefund(projectGroupId: string, token: string, id: string) {
@@ -733,8 +733,8 @@ async function getRefund(projectGroupId: string, token: string, id: string) {
     token,
     projectGroupId,
     params: { id },
-  });
-  return data;
+  })
+  return data
 }
 
 async function createWebhookEndpoint(
@@ -747,13 +747,13 @@ async function createWebhookEndpoint(
     token,
     projectGroupId,
     params,
-  });
-  return data;
+  })
+  return data
 }
 
 interface GetStripeParams {
-  projectGroupId: string;
-  token: string;
+  projectGroupId: string
+  token: string
 }
 
 function getStripe({ projectGroupId, token }: GetStripeParams) {
@@ -768,26 +768,26 @@ function getStripe({ projectGroupId, token }: GetStripeParams) {
         expire: partial(expireCheckoutSession, projectGroupId, token),
         listLineItems: partial(listCheckoutSessionLineItems, projectGroupId, token),
       },
-    };
+    }
     products = {
       create: partial(createProduct, projectGroupId, token),
       list: partial(listProducts, projectGroupId, token),
       retrieve: partial(getProduct, projectGroupId, token),
       update: partial(updateProduct, projectGroupId, token),
       del: partial(deleteProduct, projectGroupId, token),
-    };
+    }
     prices = {
       create: partial(createPrice, projectGroupId, token),
       list: partial(listPrices, projectGroupId, token),
       retrieve: partial(getPrice, projectGroupId, token),
       update: partial(updatePrice, projectGroupId, token),
-    };
+    }
     customers = {
       create: partial(createCustomer, projectGroupId, token),
       list: partial(listCustomers, projectGroupId, token),
       get: partial(getCustomer, projectGroupId, token),
       retrieve: partial(getCustomer, projectGroupId, token),
-    };
+    }
     paymentIntents = {
       create: partial(createPaymentIntent, projectGroupId, token),
       list: partial(listPaymentIntents, projectGroupId, token),
@@ -795,21 +795,21 @@ function getStripe({ projectGroupId, token }: GetStripeParams) {
       update: partial(updatePaymentIntent, projectGroupId, token),
       confirm: partial(confirmPaymentIntent, projectGroupId, token),
       cancel: partial(cancelPaymentIntent, projectGroupId, token),
-    };
+    }
     paymentMethods = {
       create: partial(createPaymentMethod, projectGroupId, token),
       list: partial(listPaymentMethods, projectGroupId, token),
       retrieve: partial(getPaymentMethod, projectGroupId, token),
       attach: partial(attachPaymentMethod, projectGroupId, token),
       detach: partial(detachPaymentMethod, projectGroupId, token),
-    };
+    }
     subscriptions = {
       create: partial(createSubscription, projectGroupId, token),
       list: partial(listSubscriptions, projectGroupId, token),
       retrieve: partial(getSubscription, projectGroupId, token),
       update: partial(updateSubscription, projectGroupId, token),
       cancel: partial(cancelSubscription, projectGroupId, token),
-    };
+    }
     invoices = {
       create: partial(createInvoice, projectGroupId, token),
       list: partial(listInvoices, projectGroupId, token),
@@ -818,35 +818,33 @@ function getStripe({ projectGroupId, token }: GetStripeParams) {
       finalizeInvoice: partial(finalizeInvoice, projectGroupId, token),
       pay: partial(payInvoice, projectGroupId, token),
       voidInvoice: partial(voidInvoice, projectGroupId, token),
-    };
+    }
     charges = {
       create: partial(createCharge, projectGroupId, token),
       list: partial(listCharges, projectGroupId, token),
       retrieve: partial(getCharge, projectGroupId, token),
       update: partial(updateCharge, projectGroupId, token),
-    };
+    }
     refunds = {
       create: partial(createRefund, projectGroupId, token),
       list: partial(listRefunds, projectGroupId, token),
       retrieve: partial(getRefund, projectGroupId, token),
-    };
+    }
     webhookEndpoints = {
       create: partial(createWebhookEndpoint, projectGroupId, token),
-    };
+    }
   }
-  return StripeClient;
+  return StripeClient
 }
 const hasEnv =
-  env.CREATE_TEMP_API_KEY &&
-  env.NEXT_PUBLIC_PROJECT_GROUP_ID &&
-  env.NEXT_PUBLIC_CREATE_API_BASE_URL;
+  env.CREATE_TEMP_API_KEY && env.NEXT_PUBLIC_PROJECT_GROUP_ID && env.NEXT_PUBLIC_CREATE_API_BASE_URL
 
 const stripe = hasEnv
   ? getStripe({
       projectGroupId: env.NEXT_PUBLIC_PROJECT_GROUP_ID,
       token: env.CREATE_TEMP_API_KEY,
     })
-  : regularStripe;
+  : regularStripe
 
-export default stripe;
-export { stripe as Stripe };
+export default stripe
+export { stripe as Stripe }
