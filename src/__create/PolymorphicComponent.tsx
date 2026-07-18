@@ -2,20 +2,18 @@ import {
   createElement,
   forwardRef,
   useEffect,
-  useCallback,
   useRef,
   ElementType,
   Ref,
   ReactNode,
   SyntheticEvent,
   RefObject,
-} from 'react';
+} from 'react'
 
-
-const JSX_RENDER_ID_ATTRIBUTE_NAME = 'data-render-id';
+const JSX_RENDER_ID_ATTRIBUTE_NAME = 'data-render-id'
 /** Builds an SVG grid that stretches to the given pixel box */
 export function buildGridPlaceholder(w: number, h: number): string {
-  const size = Math.max(w, h);
+  const size = Math.max(w, h)
   const svg = `
     <svg width="${size}" height="${size}" viewBox="0 0 895 895" preserveAspectRatio="xMidYMid slice" fill="none" xmlns="http://www.w3.org/2000/svg">
 <rect width="895" height="895" fill="#E9E7E7"/>
@@ -37,30 +35,30 @@ export function buildGridPlaceholder(w: number, h: number): string {
 <circle cx="448" cy="442" r="384.495" stroke="#C0C0C0" stroke-width="1.00975"/>
 </g>
 </svg>
-`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
-type PropsOf<As extends ElementType> = Omit<React.ComponentPropsWithRef<As>, 'as' | 'ref'>;
+type PropsOf<As extends ElementType> = Omit<React.ComponentPropsWithRef<As>, 'as' | 'ref'>
 
 interface ExtraProps {
-  renderId?: string;
+  renderId?: string
 }
 
 type PolymorphicProps<As extends ElementType> = PropsOf<As> &
   ExtraProps & {
-    as: As;
-    children?: ReactNode;
-  };
+    as: As
+    children?: ReactNode
+  }
 
 /**
  * Returns a fallback ref if no ref or a callback ref is passed.
  * Otherwise, it returns the original ref.
  */
 function useOptionalRef<T>(ref?: Ref<T> | null): RefObject<T> {
-  const fallbackRef = useRef<T>(null);
-  if (ref && 'instance' in ref) return fallbackRef;
-  return (ref as RefObject<T> | null) ?? fallbackRef;
+  const fallbackRef = useRef<T>(null)
+  if (ref && 'instance' in ref) return fallbackRef
+  return (ref as RefObject<T> | null) ?? fallbackRef
 }
 
 const CreatePolymorphicComponent = forwardRef(
@@ -76,77 +74,77 @@ const CreatePolymorphicComponent = forwardRef(
             ...rest,
             // keep the original type of onError for <img>
             onError: (e: SyntheticEvent<HTMLImageElement, Event>) => {
-              if (typeof onError === 'function') onError(e);
-              const img = e.currentTarget;
-              const { width, height } = img.getBoundingClientRect();
-              img.dataset.hasFallback = '1';
-              img.onerror = null;
-              img.src = buildGridPlaceholder(Math.round(width) || 128, Math.round(height) || 128);
-              img.style.objectFit = 'cover';
+              if (typeof onError === 'function') onError(e)
+              const img = e.currentTarget
+              const { width, height } = img.getBoundingClientRect()
+              img.dataset.hasFallback = '1'
+              img.onerror = null
+              img.src = buildGridPlaceholder(Math.round(width) || 128, Math.round(height) || 128)
+              img.style.objectFit = 'cover'
             },
           }
-        : rest;
-    const ref = useOptionalRef(forwardedRef);
+        : rest
+    const ref = useOptionalRef(forwardedRef)
 
     // If a grid placeholder is active, regenerate it on resize
     useEffect(() => {
-      const el = ref && 'current' in (ref as any) ? (ref as any).current : null;
-      if (!el) return;
+      const el = ref && 'current' in (ref as any) ? (ref as any).current : null
+      if (!el) return
       if (as !== 'img') {
         const placeholder = () => {
-          const { width, height } = el.getBoundingClientRect();
-          return buildGridPlaceholder(Math.round(width) || 128, Math.round(height) || 128);
-        };
+          const { width, height } = el.getBoundingClientRect()
+          return buildGridPlaceholder(Math.round(width) || 128, Math.round(height) || 128)
+        }
 
         const applyBgFallback = () => {
-          el.dataset.hasFallback = '1';
-          el.style.backgroundImage = `url("${placeholder()}")`;
-          el.style.backgroundSize = 'cover';
-        };
+          el.dataset.hasFallback = '1'
+          el.style.backgroundImage = `url("${placeholder()}")`
+          el.style.backgroundSize = 'cover'
+        }
 
         const probeBg = () => {
-          const bg = getComputedStyle(el).backgroundImage;
-          const match = /url\(["']?(.+?)["']?\)/.exec(bg);
-          const src = match?.[1];
-          if (!src) return;
+          const bg = getComputedStyle(el).backgroundImage
+          const match = /url\(["']?(.+?)["']?\)/.exec(bg)
+          const src = match?.[1]
+          if (!src) return
 
-          const probe = new Image();
-          probe.onerror = applyBgFallback;
-          probe.src = src;
-        };
+          const probe = new Image()
+          probe.onerror = applyBgFallback
+          probe.src = src
+        }
 
-        probeBg();
+        probeBg()
 
         const ro = new ResizeObserver(([entry]) => {
-          if (!el.dataset.hasFallback) return;
-          const { width, height } = entry.contentRect;
+          if (!el.dataset.hasFallback) return
+          const { width, height } = entry.contentRect
           el.style.backgroundImage = `url("${buildGridPlaceholder(
             Math.round(width) || 128,
             Math.round(height) || 128
-          )}")`;
-        });
-        ro.observe(el);
+          )}")`
+        })
+        ro.observe(el)
 
-        const mo = new MutationObserver(probeBg);
+        const mo = new MutationObserver(probeBg)
         mo.observe(el, {
           attributes: true,
           attributeFilter: ['style', 'class'],
-        });
+        })
 
         return () => {
-          ro.disconnect();
-          mo.disconnect();
-        };
+          ro.disconnect()
+          mo.disconnect()
+        }
       }
-      if (!el.dataset.hasFallback) return;
+      if (!el.dataset.hasFallback) return
 
       const ro = new ResizeObserver(([entry]) => {
-        const { width, height } = entry.contentRect;
-        el.src = buildGridPlaceholder(Math.round(width) || 128, Math.round(height) || 128);
-      });
-      ro.observe(el);
-      return () => ro.disconnect();
-    }, [as, ref]);
+        const { width, height } = entry.contentRect
+        el.src = buildGridPlaceholder(Math.round(width) || 128, Math.round(height) || 128)
+      })
+      ro.observe(el)
+      return () => ro.disconnect()
+    }, [as, ref])
 
     return createElement(
       as,
@@ -155,8 +153,8 @@ const CreatePolymorphicComponent = forwardRef(
         ...(renderId ? { [JSX_RENDER_ID_ATTRIBUTE_NAME]: renderId } : undefined),
       }),
       children
-    );
+    )
   }
-);
+)
 
-export default CreatePolymorphicComponent;
+export default CreatePolymorphicComponent
