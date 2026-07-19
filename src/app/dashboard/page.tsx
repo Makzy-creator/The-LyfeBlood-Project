@@ -394,8 +394,13 @@ export default function DashboardPage() {
   }
 
   const handleCreateRequest = async (formData) => {
-    setRequestSubmitting(true)
     setRequestError('')
+    if (!currentUser?.id) {
+      setRequestError('Your profile is still loading. Please sign in again and retry.')
+      return
+    }
+
+    setRequestSubmitting(true)
     try {
       const { request } = await addRequest({
         tier: 'standard',
@@ -403,7 +408,6 @@ export default function DashboardPage() {
         unitsNeeded: formData.unitsNeeded,
         hospitalName: formData.hospitalName,
         patientCode: formData.patientCode,
-        requestedBy: currentUser.email ? currentUser.id : null,
         urgencyNote: formData.urgencyNote,
         requestType: formData.requestType,
         scheduledFor: formData.scheduledFor,

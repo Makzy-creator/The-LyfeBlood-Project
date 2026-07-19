@@ -32,7 +32,7 @@ function canDeleteRequest(request) {
 }
 
 // ─── NEW REQUEST MODAL SHEET ──────────────────────────────────────────────────
-function NewRequestSheet({ onClose, onSubmit, isSOS }) {
+function NewRequestSheet({ onClose, onSubmit, isSOS, isSubmitting, submitError }) {
   const [form, setForm] = useState({
     bloodGroup: '',
     ward: '',
@@ -297,6 +297,12 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
             />
           </div>
 
+          {submitError && (
+            <div role="alert" style={{ color: '#922B21', fontWeight: '600' }}>
+              {submitError}
+            </div>
+          )}
+
           {/* Actions */}
           <div
             style={{
@@ -308,12 +314,12 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
           >
             <PrimaryButton
               onClick={() => {
-                if (canSubmit) onSubmit({ ...form, isSOS })
+                if (canSubmit && !isSubmitting) onSubmit({ ...form, isSOS })
               }}
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               icon={isSOS ? AlertTriangle : Plus}
             >
-              {isSOS ? 'Trigger SOS Broadcast' : 'Post Blood Request'}
+              {isSubmitting ? 'Creating...' : isSOS ? 'Trigger SOS Broadcast' : 'Post Blood Request'}
             </PrimaryButton>
             <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
           </div>
@@ -337,6 +343,8 @@ export default function HospitalDashboardPage() {
   } = useApp()
 
   const [showSheet, setShowSheet] = useState(false)
+  const [requestSubmitting, setRequestSubmitting] = useState(false)
+  const [requestError, setRequestError] = useState('')
   const [sheetIsSOS, setSheetIsSOS] = useState(false)
   const [sosPressed, setSosPressed] = useState(false)
   const [acceptedMatches, setAcceptedMatches] = useState([])
@@ -382,7 +390,15 @@ export default function HospitalDashboardPage() {
   }, [isAuthenticated, loadAcceptedMatches])
 
   const handleNewRequest = async (formData) => {
-    await addRequest({
+    setRequestError('')
+    if (!currentUser?.id) {
+      setRequestError('Your profile is still loading. Please sign in again and retry.')
+      return
+    }
+
+    setRequestSubmitting(true)
+    try {
+      await addRequest({
       tier: formData.isSOS ? 'sos' : 'standard',
       bloodGroup: formData.bloodGroup,
       unitsNeeded: formData.unitsNeeded,
@@ -391,11 +407,15 @@ export default function HospitalDashboardPage() {
       ward: formData.ward,
       patientCode: formData.patientCode || `FMC-${Date.now().toString().slice(-4)}`,
       status: REQUEST_STATUS.PENDING,
-      requestedBy: 'hospital_officer',
       urgencyNote: formData.urgencyNote,
       location: currentUser?.location || 'Owerri Municipal, Imo State',
-    })
-    setShowSheet(false)
+      })
+      setShowSheet(false)
+    } catch (error) {
+      setRequestError(error?.message ?? 'Failed to create request.')
+    } finally {
+      setRequestSubmitting(false)
+    }
   }
 
   const handleVerifyCheckIn = async () => {
@@ -1305,6 +1325,8 @@ export default function HospitalDashboardPage() {
           onClose={() => setShowSheet(false)}
           onSubmit={handleNewRequest}
           isSOS={sheetIsSOS}
+          isSubmitting={requestSubmitting}
+          submitError={requestError}
         />
       )}
 

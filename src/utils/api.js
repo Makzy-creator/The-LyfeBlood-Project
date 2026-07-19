@@ -220,7 +220,10 @@ export async function apiUpdateRequestStatus(payload) {
  * @returns {{ request, message }}
  */
 export async function apiCreateRequest(payload) {
-  return supabase.rpc('create_blood_request', payload)
+  return apiFetch('/api/requests/create', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 // ── Matches ───────────────────────────────────────────────────────────────────

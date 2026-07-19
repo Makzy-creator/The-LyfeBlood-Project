@@ -7,7 +7,7 @@ import BottomNavBar from '@/components/ui/BottomNavBar'
 import PrimaryButton from '@/components/ui/PrimaryButton'
 import SecondaryButton from '@/components/ui/SecondaryButton'
 import BloodGroupTag from '@/components/ui/BloodGroupTag'
-import { useApp, BLOOD_GROUPS } from '@/context/AppContext'
+import { useApp } from '@/context/AppContext'
 import { supabase } from '@/lib/supabase-client'
 
 const inputStyle = {
@@ -120,9 +120,7 @@ export default function ProfilePage() {
       const { data: user, error: updateError } = await supabase
         .from('users')
         .update({
-          full_name: form.fullName.trim(),
           phone: form.phone.trim() || null,
-          blood_type: form.bloodGroup || null,
           location: form.location.trim() || null,
           availability_status: form.isAvailable ? 1 : 0,
         })
@@ -206,29 +204,29 @@ export default function ProfilePage() {
                 style={inputStyle}
                 type="text"
                 value={form.fullName}
-                onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+                readOnly
+                aria-readonly="true"
               />
             </Field>
 
             <Field label="Blood Type">
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {BLOOD_GROUPS.map((group) => (
-                  <button
-                    key={group}
-                    type="button"
-                    onClick={() => setForm((f) => ({ ...f, bloodGroup: group }))}
-                    style={{
-                      background: 'none',
-                      border: `2px solid ${form.bloodGroup === group ? '#C0392B' : '#C8C8C8'}`,
-                      borderRadius: '8px',
-                      padding: 0,
-                      cursor: 'pointer',
-                      boxShadow: form.bloodGroup === group ? '0 0 0 3px #FADBD8' : 'none',
-                    }}
-                  >
-                    <BloodGroupTag group={group} size="md" />
-                  </button>
-                ))}
+              <div
+                aria-readonly="true"
+                style={{
+                  minHeight: '48px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  paddingInline: '14px',
+                  border: '1.5px solid #C8C8C8',
+                  borderRadius: '8px',
+                  backgroundColor: '#F5F5F5',
+                }}
+              >
+                {form.bloodGroup ? (
+                  <BloodGroupTag group={form.bloodGroup} size="md" />
+                ) : (
+                  <span style={{ fontSize: '15px', color: '#6B7280' }}>Not provided</span>
+                )}
               </div>
             </Field>
 
