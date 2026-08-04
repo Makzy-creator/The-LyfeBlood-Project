@@ -378,7 +378,6 @@ export function AppProvider({ children }) {
         patient_ref: newRequest.patientCode ?? newRequest.ward ?? null,
         location: newRequest.location ?? null,
         urgency_note: newRequest.urgencyNote ?? null,
-        requested_by: newRequest.requestedBy ?? null,
         request_type: newRequest.requestType ?? 'Emergency',
         scheduled_for: newRequest.scheduledFor ?? null,
       })

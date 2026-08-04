@@ -1,11 +1,10 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
-  Upload,
   User,
   Droplets,
   Building2,
@@ -205,6 +204,8 @@ function Step1({ form, setForm }) {
           />
           <button
             type="button"
+            aria-label={showPw ? 'Hide password' : 'Show password'}
+            aria-pressed={showPw}
             onClick={() => setShowPw((v) => !v)}
             style={{
               position: 'absolute',
@@ -215,7 +216,12 @@ function Step1({ form, setForm }) {
               border: 'none',
               cursor: 'pointer',
               color: '#6B6B6B',
-              padding: 0,
+              padding: '10px',
+              minWidth: '44px',
+              minHeight: '44px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -241,6 +247,8 @@ function Step1({ form, setForm }) {
           />
           <button
             type="button"
+            aria-label={showConfirm ? 'Hide confirm password' : 'Show confirm password'}
+            aria-pressed={showConfirm}
             onClick={() => setShowConfirm((v) => !v)}
             style={{
               position: 'absolute',
@@ -251,7 +259,12 @@ function Step1({ form, setForm }) {
               border: 'none',
               cursor: 'pointer',
               color: '#6B6B6B',
-              padding: 0,
+              padding: '10px',
+              minWidth: '44px',
+              minHeight: '44px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -519,16 +532,6 @@ function Step2Hospital({ form, setForm }) {
 
 // ─── STEP 3 DONOR: KYC UPLOAD ─────────────────────────────────────────────────
 function Step3Donor({ form, setForm }) {
-  const fileRef = useRef(null)
-  const [dragOver, setDragOver] = useState(false)
-
-  const handleFile = (file) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (e) => setForm((f) => ({ ...f, kycFile: file, kycPreview: e.target.result }))
-    reader.readAsDataURL(file)
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div>
@@ -540,106 +543,25 @@ function Step3Donor({ form, setForm }) {
             margin: '0 0 4px',
           }}
         >
-          Identity Verification
+          Donor Declaration
         </h2>
         <p style={{ fontSize: '13px', color: '#6B6B6B', margin: 0 }}>
-          Upload a government-issued ID to complete your donor profile.
+          Confirm your eligibility before creating your donor profile.
         </p>
       </div>
 
-      <Field label="National ID / Voter Card / Driver's Licence" required>
-        <div
-          onClick={() => fileRef.current?.click()}
-          onDragOver={(e) => {
-            e.preventDefault()
-            setDragOver(true)
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault()
-            setDragOver(false)
-            handleFile(e.dataTransfer.files[0])
-          }}
-          style={{
-            border: `2px dashed ${dragOver ? '#C0392B' : form.kycPreview ? '#27AE60' : '#C8C8C8'}`,
-            borderRadius: '12px',
-            padding: '32px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '12px',
-            cursor: 'pointer',
-            backgroundColor: dragOver ? '#FADBD8' : form.kycPreview ? '#D5F5E3' : '#FAFAFA',
-            transition: 'all 200ms',
-            minHeight: '160px',
-          }}
-        >
-          {form.kycPreview ? (
-            <>
-              <img
-                src={form.kycPreview}
-                alt="ID preview"
-                style={{
-                  width: '100%',
-                  maxWidth: '280px',
-                  height: '140px',
-                  objectFit: 'cover',
-                  borderRadius: '8px',
-                }}
-              />
-              <p
-                style={{
-                  fontSize: '12px',
-                  color: '#27AE60',
-                  fontWeight: '600',
-                  margin: 0,
-                }}
-              >
-                ✓ {form.kycFile?.name || 'File selected'} — tap to replace
-              </p>
-            </>
-          ) : (
-            <>
-              <div
-                style={{
-                  width: '52px',
-                  height: '52px',
-                  borderRadius: '50%',
-                  backgroundColor: '#FADBD8',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Upload size={22} color="#C0392B" />
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <p
-                  style={{
-                    fontSize: '14px',
-                    fontWeight: '700',
-                    color: '#1A1A1A',
-                    margin: '0 0 4px',
-                  }}
-                >
-                  Tap to upload National ID / Voter Card
-                </p>
-                <p style={{ fontSize: '12px', color: '#6B6B6B', margin: 0 }}>
-                  or drag and drop here · JPG, PNG, PDF up to 5MB
-                </p>
-              </div>
-            </>
-          )}
-        </div>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', cursor: 'pointer' }}>
         <input
-          ref={fileRef}
-          type="file"
-          accept="image/*,.pdf"
-          style={{ display: 'none' }}
-          onChange={(e) => handleFile(e.target.files[0])}
+          type="checkbox"
+          checked={form.donorDeclaration}
+          onChange={(e) => setForm((f) => ({ ...f, donorDeclaration: e.target.checked }))}
+          style={{ width: '18px', height: '18px', marginTop: '2px', accentColor: '#C0392B' }}
         />
-      </Field>
+        <span style={{ fontSize: '13px', color: '#4A4A4A', lineHeight: '1.5' }}>
+          I confirm that the information provided is accurate and understand that final identity and
+          medical eligibility checks take place at the hospital before donation.
+        </span>
+      </label>
 
       <div
         style={{
@@ -659,8 +581,8 @@ function Step3Donor({ form, setForm }) {
             lineHeight: '1.5',
           }}
         >
-          Your ID is encrypted and used solely to verify donor identity. It is never shared with
-          third parties.
+          LyfeBlood does not collect identity documents during registration. Bring a valid ID to the
+          hospital when attending a donation appointment.
         </p>
       </div>
     </div>
@@ -765,8 +687,7 @@ export default function RegisterPage() {
     address: '',
     facilityType: '',
     licenceNumber: '',
-    kycFile: null,
-    kycPreview: null,
+    donorDeclaration: false,
     declarations: [false, false, false],
   })
 
@@ -792,38 +713,54 @@ export default function RegisterPage() {
     return message
   }
 
-  const canProceed = () => {
+  const getValidationErrors = () => {
+    const errors = []
     if (step === 1) {
-      return (
-        form.fullName &&
-        form.email &&
-        form.phone &&
-        form.password.length >= 8 &&
-        form.password === form.confirmPassword
-      )
+      if (!form.fullName.trim()) errors.push('Enter your full name.')
+      if (!form.email.trim()) errors.push('Enter your email address.')
+      if (!form.phone.trim()) errors.push('Enter your phone number.')
+      if (form.password.length < 8) errors.push('Use a password with at least 8 characters.')
+      if (form.password !== form.confirmPassword) errors.push('Make sure both passwords match.')
     }
     if (step === 2) {
-      if (role === 'donor')
-        return (
-          form.bloodGroup &&
-          form.age &&
-          parseInt(form.age, 10) >= 18 &&
-          parseInt(form.age, 10) <= 55 &&
-          form.city
-        )
-      if (role === 'requester')
-        return form.patientName && form.relationship && form.bloodGroup && form.hospital
-      if (role === 'hospital')
-        return form.hospitalName && form.department && form.address && form.facilityType
+      if (role === 'donor') {
+        if (!form.bloodGroup) errors.push('Select your blood group.')
+        if (!form.age || parseInt(form.age, 10) < 18 || parseInt(form.age, 10) > 55)
+          errors.push('Enter an eligible donor age between 18 and 55.')
+        if (!form.city.trim()) errors.push('Enter your city or local government area.')
+      }
+      if (role === 'requester') {
+        if (!form.patientName.trim()) errors.push("Enter the patient's full name.")
+        if (!form.relationship) errors.push('Select your relationship to the patient.')
+        if (!form.bloodGroup) errors.push('Select the blood group needed.')
+        if (!form.hospital.trim()) errors.push('Enter the hospital or location.')
+      }
+      if (role === 'hospital') {
+        if (!form.hospitalName.trim()) errors.push('Enter the facility name.')
+        if (!form.department.trim()) errors.push('Enter your department.')
+        if (!form.address.trim()) errors.push('Enter the facility address.')
+        if (!form.facilityType) errors.push('Select the facility type.')
+      }
     }
     if (step === 3) {
-      if (role === 'donor') return !!form.kycFile
-      return form.declarations?.every(Boolean)
+      if (role === 'donor' && !form.donorDeclaration)
+        errors.push('Confirm the donor declaration before creating your account.')
+      if (role !== 'donor' && !form.declarations?.every(Boolean))
+        errors.push('Accept all declarations before creating your account.')
+      if (role === 'hospital' && !form.licenceNumber.trim())
+        errors.push('Enter the facility licence number.')
     }
-    return true
+    return errors
   }
 
   const handleNext = async () => {
+    const validationErrors = getValidationErrors()
+    if (validationErrors.length) {
+      setApiError(validationErrors.join(' '))
+      return
+    }
+
+    setApiError(null)
     if (step < TOTAL_STEPS) {
       setStep((s) => s + 1)
       return
@@ -844,13 +781,37 @@ export default function RegisterPage() {
         role: role === 'requester' ? 'requester' : role === 'hospital' ? 'hospital' : 'donor',
         blood_type: form.bloodGroup || null,
         location: form.city || form.address || null,
+        registration_details:
+          role === 'requester'
+            ? {
+                patient_name: form.patientName,
+                relationship: form.relationship,
+                hospital: form.hospital,
+                declarations_accepted: true,
+              }
+            : role === 'hospital'
+              ? {
+                  hospital_name: form.hospitalName,
+                  department: form.department,
+                  facility_type: form.facilityType,
+                  licence_number: form.licenceNumber,
+                  declarations_accepted: true,
+                }
+              : { donor_declaration_accepted: true },
       })
       // API succeeded — navigate to confirmation
       if (session?.access_token && session?.refresh_token) {
-        await supabase.auth.setSession({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-        })
+        try {
+          await supabase.auth.setSession({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+          })
+        } catch (sessionError) {
+          console.warn(
+            'Account created, but the browser session could not be initialized.',
+            sessionError
+          )
+        }
       }
       router.push(
         `/register/confirmation?requiresEmailConfirmation=${requiresEmailConfirmation}&email=${encodeURIComponent(registeredEmail ?? form.email)}`
@@ -899,6 +860,7 @@ export default function RegisterPage() {
           }}
         >
           <button
+            type="button"
             onClick={handleBack}
             style={{
               width: '36px',
@@ -955,9 +917,13 @@ export default function RegisterPage() {
             return (
               <button
                 key={key}
+                type="button"
+                aria-pressed={active}
                 onClick={() => {
                   setRole(key)
                   setStep(1)
+                  setApiError(null)
+                  window.history.replaceState({}, '', `/register?role=${key}`)
                 }}
                 style={{
                   flex: 1,
@@ -1045,7 +1011,7 @@ export default function RegisterPage() {
           )}
           <PrimaryButton
             onClick={handleNext}
-            disabled={!canProceed() || submitting}
+            disabled={submitting}
             icon={step === TOTAL_STEPS ? CheckCircle2 : ChevronRight}
             style={{ flex: 1 }}
           >
@@ -1053,7 +1019,7 @@ export default function RegisterPage() {
           </PrimaryButton>
         </div>
       </div>
-      <style jsx global>{`
+      <style>{`
         * {
           box-sizing: border-box;
           -webkit-font-smoothing: antialiased;

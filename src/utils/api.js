@@ -21,7 +21,7 @@
 import { supabase } from '@/lib/supabase-client'
 
 const SAFE_USER_SELECT =
-  'id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, last_donation_at, reward_points, created_at'
+  'id, full_name, email, phone, role, blood_type, location, registration_details, availability_status, is_verified, last_donation_at, reward_points, created_at'
 
 function throwIfSupabaseError(error, fallbackMessage = 'Request failed') {
   if (!error) return
@@ -220,7 +220,10 @@ export async function apiUpdateRequestStatus(payload) {
  * @returns {{ request, message }}
  */
 export async function apiCreateRequest(payload) {
-  return supabase.rpc('create_blood_request', payload)
+  return apiFetch('/api/requests/create', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 // ── Matches ───────────────────────────────────────────────────────────────────

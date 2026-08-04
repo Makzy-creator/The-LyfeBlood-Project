@@ -1,18 +1,10 @@
-'use client'
+import type { Metadata } from 'next'
+import Providers from './providers'
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AppProvider } from '@/context/AppContext'
-import { Toaster } from 'sonner'
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5,
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-  },
-})
+export const metadata: Metadata = {
+  title: 'LyfeBlood',
+  description: 'Connecting blood donors with patients and hospitals.',
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -23,21 +15,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="icon" href="/favicon.ico" />
       </head>
       <body>
-        <QueryClientProvider client={queryClient}>
-          <AppProvider>
-            <div className="lb-viewport">
-              <div className="lb-frame">{children}</div>
-            </div>
-            <Toaster position="bottom-right" />
-            <link rel="preconnect" href="https://ka-p.fontawesome.com" crossOrigin="anonymous" />
-            <link
-              rel="stylesheet"
-              href="https://ka-p.fontawesome.com/releases/v6.3.0/css/pro.min.css?token=2c15cc0cc7"
-              crossOrigin="anonymous"
-            />
-          </AppProvider>
-        </QueryClientProvider>
-        <style jsx global>{`
+        <Providers>
+          <div className="lb-viewport">
+            <div className="lb-frame">{children}</div>
+          </div>
+        </Providers>
+        <style>{`
           html,
           body {
             margin: 0;

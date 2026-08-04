@@ -7,10 +7,35 @@ import {
 } from '@/lib/supabase-server'
 
 const SAFE_USER_SELECT =
-  'id, full_name, email, phone, role, blood_type, location, availability_status, is_verified, created_at'
+  'id, full_name, email, phone, role, blood_type, location, registration_details, availability_status, is_verified, created_at'
 
 function normalizeRole(role: string) {
   return ['donor', 'requester', 'hospital'].includes(role) ? role : null
+}
+
+function normalizeRegistrationDetails(role: string, details: unknown) {
+  const value = details && typeof details === 'object' ? (details as Record<string, unknown>) : {}
+  const text = (key: string) =>
+    typeof value[key] === 'string' && value[key].trim() ? value[key].trim() : null
+
+  if (role === 'requester') {
+    return {
+      patient_name: text('patient_name'),
+      relationship: text('relationship'),
+      hospital: text('hospital'),
+      declarations_accepted: value.declarations_accepted === true,
+    }
+  }
+  if (role === 'hospital') {
+    return {
+      hospital_name: text('hospital_name'),
+      department: text('department'),
+      facility_type: text('facility_type'),
+      licence_number: text('licence_number'),
+      declarations_accepted: value.declarations_accepted === true,
+    }
+  }
+  return { donor_declaration_accepted: value.donor_declaration_accepted === true }
 }
 
 function getErrorMessage(error: any, fallback = 'Registration failed') {
@@ -28,7 +53,8 @@ function getCreateUserStatus(error: any) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { full_name, email, phone, password, role, blood_type, location } = body
+    const { full_name, email, phone, password, role, blood_type, location, registration_details } =
+      body
 
     if (!full_name?.trim())
       return NextResponse.json({ error: 'full_name is required' }, { status: 400 })
@@ -44,6 +70,7 @@ export async function POST(request: NextRequest) {
       )
 
     const normalizedEmail = normalizeEmail(email)
+    const normalizedDetails = normalizeRegistrationDetails(normalizedRole, registration_details)
     const metadata = {
       full_name: full_name.trim(),
       phone: phone?.trim() ?? null,
@@ -52,9 +79,11 @@ export async function POST(request: NextRequest) {
       location: location ?? null,
       availability_status: 0,
       is_verified: 0,
+      registration_details: normalizedDetails,
     }
 
     const admin = createSupabaseAdminClient(request as unknown as Request)
+    const authClient = createSupabaseAuthClient(request as unknown as Request)
     const { data: created, error: createError } = await admin.auth.admin.createUser({
       email: normalizedEmail,
       password,
@@ -62,12 +91,24 @@ export async function POST(request: NextRequest) {
       user_metadata: metadata,
     })
 
+    let authUser = created.user
+    let recoveredSession = null
+
     if (createError) {
       const status = getCreateUserStatus(createError)
-      return NextResponse.json({ error: getErrorMessage(createError) }, { status })
+      if (status !== 409) {
+        return NextResponse.json({ error: getErrorMessage(createError) }, { status })
+      }
+
+      const { data: existingSession, error: existingSignInError } =
+        await authClient.auth.signInWithPassword({ email: normalizedEmail, password })
+      if (existingSignInError || !existingSession.user) {
+        return NextResponse.json({ error: getErrorMessage(createError) }, { status: 409 })
+      }
+      authUser = existingSession.user
+      recoveredSession = existingSession.session
     }
 
-    const authUser = created.user
     const supabase = createSupabaseServerClient(request as unknown as Request)
     const payload = {
       id: authUser.id,
@@ -79,6 +120,7 @@ export async function POST(request: NextRequest) {
       location: location ?? null,
       availability_status: 0,
       is_verified: 0,
+      registration_details: normalizedDetails,
     }
 
     const { data: user, error: profileError } = await supabase
@@ -94,21 +136,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const authClient = createSupabaseAuthClient(request as unknown as Request)
-    const { data: sessionData, error: signInError } = await authClient.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    })
-
-    if (signInError) {
-      throw signInError
+    let session = recoveredSession
+    if (!session) {
+      const { data: sessionData } = await authClient.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      })
+      session = sessionData.session
     }
 
     return NextResponse.json(
       {
         user,
-        session: sessionData.session,
-        token: sessionData.session?.access_token ?? null,
+        session,
+        token: session?.access_token ?? null,
         requiresEmailConfirmation: false,
         email: normalizedEmail,
         message: 'Registration successful',

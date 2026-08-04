@@ -1,68 +1,219 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides development guidance for AI coding agents working in this repository.
 
-## What this is
+## Project overview
 
-LyfeBlood — a blood-donation matching app. A single React Router 7 (SSR) application deployed to Vercel, backed by Supabase (Postgres). The app lives at the repository root; there is no monorepo nesting.
+LyfeBlood is a mobile-first blood donation coordination platform for Imo State, Nigeria. It connects donors with blood requests created by patients, families, and hospital staff, then tracks the match through acceptance, hospital arrival, collection, and completion.
+
+The application is a Next.js 16 App Router project at the repository root. It uses React 19, TypeScript, and Supabase for authentication and PostgreSQL persistence.
 
 ## Commands
 
 ```bash
-npm run dev         # Vite dev server on http://localhost:4000
-npm run typecheck   # react-router typegen + tsc --noEmit
-npm run build       # react-router build (required before smoke)
-npm run smoke       # boots api/index.js (the Vercel adapter) and asserts GET / renders HTML
-npm run check       # typecheck + build + smoke — the full pre-deploy gate
-npx vitest          # run the test suite (vitest, jsdom)
-npx vitest run src/app/api/auth/session.test.js   # run a single test file
-npx vitest -t "Remember Me"                        # run tests matching a name
+npm run dev          # Next.js development server at http://localhost:4000
+npm run typecheck    # TypeScript validation without emitting files
+npm run build        # Production Next.js build
+npm run check        # Typecheck followed by a production build
+npm run lint         # ESLint
+npm test             # Run the Vitest suite once
+npm run format       # Format the repository with Prettier
+npm run format:check # Check formatting without changing files
+npm start            # Serve an existing production build
 ```
 
-`npm run check` requires the env vars from `.env.example` (at minimum `DATABASE_URL`, `AUTH_SECRET`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`). See `DEPLOYMENT.md` for the exact one-liner and the full Vercel variable list.
+Run a focused test with:
+
+```bash
+npx vitest run src/app/api/auth/session.test.js
+npx vitest -t "test name"
+```
+
+Node.js 22 is required by `package.json`.
+
+## Environment
+
+Copy `.env.example` to `.env.local`. The active Next.js/Supabase path uses:
+
+```text
+SUPABASE_URL
+SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+AUTH_SECRET
+```
+
+Optional variables are `OTP_SECRET`, `OTP_TTL_MINUTES`, and `NEXT_PUBLIC_WORKER_URL`.
+
+`DATABASE_URL` remains in `.env.example` for a legacy or alternative integration but is not used by the current Next.js data path. `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are compatibility fallbacks in `src/lib/supabase-client.ts`; new configuration should use the `NEXT_PUBLIC_` names.
+
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `AUTH_SECRET`, or `OTP_SECRET` through a `NEXT_PUBLIC_` variable.
 
 ## Architecture
 
-### Backend of record: Supabase (Postgres)
+### Next.js App Router
 
-Despite `DATABASE_URL`/Neon references in some comments, the live data layer is **Supabase**. Server code creates clients via `src/app/api/utils/supabase.js`:
+- Pages and layouts live under `src/app`.
+- Dynamic segments use directories such as `[requestId]` and `[matchId]`.
+- API endpoints are Next.js route handlers in `src/app/api/**/route.ts`.
+- Route handlers export standard `GET`, `POST`, `PATCH`, or `DELETE` functions and return `Response`/`NextResponse` values.
+- `src/proxy.ts` refreshes Supabase sessions and propagates auth cookies.
+- `src/app/layout.tsx` installs the TanStack Query provider, application context, toast UI, and the responsive application frame.
 
-- `createSupabaseServerClient()` — service-role (or anon) key, server-only, bypasses RLS.
-- `createSupabaseAuthClient()` — anon key, used for `signInWithPassword` / session refresh.
-- Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser (no `VITE_`/`NEXT_PUBLIC_` prefix).
+Do not add React Router, Vite routing, `routes.ts`, or a custom Vercel adapter. Those belonged to an earlier version of the application.
 
-The browser talks to Supabase directly through `src/lib/supabase-client.js`, and `src/utils/api.js` is the unified client that most components call.
+### Supabase
 
-Database schema lives in **`src/supabase/migrations/*.sql`** (timestamped). Add a new migration file rather than editing existing ones.
+Supabase is the backend of record.
 
-### File-based routing
+- `src/lib/supabase-client.ts` creates the browser client.
+- `src/lib/supabase-server.ts` creates server, auth, and admin clients.
+- `createSupabaseServerClient()` prefers the service-role key and is used for trusted server operations.
+- `createSupabaseAuthClient()` uses the anonymous key for Supabase Auth operations.
+- `createSupabaseAdminClient()` requires the service-role key.
+- Database changes live in `src/supabase/migrations/*.sql`.
 
-Routes are generated at build time by `src/app/routes.ts`, which walks `src/app/` looking for `page.jsx` files. Conventions:
+Migrations are incremental. Add a new timestamped migration rather than editing an already applied migration. Preserve Row Level Security and participant-scoped access when adding tables, policies, or RPCs.
 
-- `page.jsx` → a route; directory path becomes the URL.
-- `[param]` directory → `:param`; `[...param]` → catch-all `*`.
-- `route.js` files under `src/app/api/**` export HTTP-method handlers (`GET`, `POST`, …) that take/return standard `Request`/`Response`. These are the server API endpoints (auth, requests, matches, profile, notifications, tokens).
-- `src/app/root.tsx` is the SSR document + error boundary; `layout.jsx` files wrap route subtrees.
+The `src/worker` directory contains legacy/optional Cloudflare Worker artifacts. Its D1 schema is SQLite-specific and is not the schema source for the current Supabase application.
 
-### Auth
+### Authentication and authorization
 
-Two layers:
+Supabase Auth is the credential and access-token provider. The main endpoints are under `src/app/api/auth`.
 
-- **Server sessions** (`src/app/api/utils/auth.js`): PBKDF2 password hashing + HMAC-signed tokens, `requireAuth()` / `getCanonicalRole()`. Roles are normalized through `ROLE_ALIASES` (e.g. `requester`/`patient_family` → `patient`, `hospital` → `hospital_staff`). Supabase Auth is the credential store; login/session/logout live under `src/app/api/auth/`.
-- **Client auth** (`src/utils/useAuth.js` via `@hono/auth-js`): credential + social sign-in. Social providers fall back to a dev shim (`/__create/social-dev-shim`) when running inside a dev iframe.
+`src/lib/auth-server.ts` provides:
+
+- `requireAuth()` for bearer-token authentication
+- `getCanonicalRole()` and `hasRole()` for role authorization
+- legacy HMAC session-token and PBKDF2 password helpers retained for compatibility
+
+Canonical roles are:
+
+```text
+donor
+patient
+hospital_staff
+admin
+```
+
+Legacy/UI aliases are normalized, including `requester` and `patient_family` to `patient`, and `hospital`, `hospital_officer` to `hospital_staff`.
+
+Do not rely only on client-side role checks. Every protected server operation must authenticate and authorize independently.
+
+### Client state and data access
+
+`src/context/AppContext.jsx` coordinates the signed-in user, blood requests, notifications, and UI state. Most client-side API calls go through `src/utils/api.js`.
+
+The browser Supabase session is the source of the bearer token. Session-scoped application state is stored in `sessionStorage`; durable preferences may use `localStorage`.
+
+TanStack Query is configured in the root layout with a five-minute stale time, one retry, and no refetch on window focus.
 
 ### Domain model
 
-Blood-donation matching. Core concepts: blood **requests** (with `urgency_tier` SOS/Urgent/Normal, sorted SOS-first), donor–request **matches**, OTP **tokens** for check-in verification, and **notifications**. Blood-type compatibility tables live in both `src/utils/bloodTypes.js` (client) and inside `src/app/api/requests/route.js` (`REQUEST_TYPES_BY_DONOR`). Request status has a canonical lowercase set (`pending`, `verified`, `donor_matched`, `checked_in`, `blood_collected`, `fulfilled`, `cancelled`) with `STATUS_ALIASES` mapping older title-case values.
+Core entities are:
 
-### The `__create` scaffolding
+- `users` — donors, patients, hospital staff, and administrators
+- `blood_requests` — requested blood types, urgency, location, units, and state
+- `matches` — donor-to-request candidates and responses
+- `verification_tokens` — expiring, hashed OTPs for hospital check-in
+- `notifications` — user alerts and read state
+- `chat_messages` — communication between accepted-match participants
+- `donor_locations` — journey tracking for accepted donors
+- `role_change_requests` — controlled requests for elevated roles
 
-`src/__create/` and `src/app/__create/` plus the Vite plugins in `plugins/` come from the Create.xyz platform this app was bootstrapped on. They handle design-mode, render-ID injection, console piping to a parent frame, font loading from Tailwind, and a Stripe shim. Treat this as generated infrastructure — prefer working in `src/app`, `src/utils`, `src/lib`, `src/components`, and `src/hooks`/`context` rather than modifying `__create`.
+Canonical request statuses are:
 
-### Path alias
+```text
+pending
+verified
+donor_matched
+checked_in
+blood_collected
+fulfilled
+cancelled
+```
 
-`@/` resolves to `src/` (configured in `tsconfig.json`, `vite.config.ts`, and `vitest.config.ts`). Import shared code as e.g. `@/app/api/utils/supabase`.
+Urgency is ordered `SOS`, `Urgent`, then `Standard`.
 
-## Deployment
+Blood-type parsing and validation utilities live in `src/utils/bloodTypes.js`. The database matching rules and RPCs live in the Supabase migrations. Keep client display logic and server/database compatibility behavior consistent when changing blood-type handling.
 
-Vercel, with **Root Directory left empty** (the app is the repo root). `vercel.json` rewrites everything to `api/index.js` (the React Router Vercel adapter) except `/assets/*`; build output is `build/client`. The `smoke` test exercises this exact adapter, so run `npm run check` before deploying.
+`src/lib/matching.ts` invokes the `create_matches_for_request` PostgreSQL RPC and creates notifications for donors and request recipients.
+
+## Main routes
+
+```text
+/                              Public landing page
+/login                         Sign in
+/register                      Account registration
+/dashboard                     Patient/family dashboard
+/hospital/dashboard            Hospital dashboard
+/donor/home                    Donor dashboard
+/requests/[requestId]          Request details
+/requests/history              Request history
+/donor/match/[matchId]         Donor match response
+/donor/match/[matchId]/checkin OTP check-in
+/matches/[matchId]/chat        Participant chat
+/matches/[matchId]/tracking    Donor journey tracking
+/donations/history             Donation history
+/profile                       User profile
+```
+
+API groups under `src/app/api` cover auth, profiles, requests, matches, notifications, tracking, chat, hospital status, and token verification.
+
+## Repository layout
+
+```text
+src/
+├── app/                    # App Router pages, layouts, and route handlers
+│   └── api/                # Server API endpoints
+├── components/ui/          # Shared application UI components
+├── context/AppContext.jsx  # Client auth and domain state
+├── lib/                    # Auth, Supabase, OTP, matching, notifications
+├── supabase/migrations/    # Ordered PostgreSQL/Supabase migrations
+├── utils/                  # API client, hooks, and domain utilities
+├── worker/                 # Legacy/optional Cloudflare Worker artifacts
+└── proxy.ts                # Supabase session refresh proxy
+```
+
+The `@/` alias resolves to `src/`.
+
+`src/__create` and `src/client-integrations` contain Create.xyz-generated compatibility code. Prefer editing `src/app`, `src/components`, `src/context`, `src/lib`, and `src/utils` unless the task specifically concerns generated integration behavior.
+
+## UI conventions
+
+- The interface is mobile-first, with a centered frame that expands on larger screens.
+- Reuse components in `src/components/ui` before creating route-local duplicates.
+- Preserve the existing LyfeBlood palette and responsive behavior unless a redesign is requested.
+- Client components must include `'use client'` when they use hooks, browser APIs, or client-only providers.
+- Keep accessibility in mind for form labels, keyboard interaction, status messaging, and color contrast.
+
+## Testing and validation
+
+Vitest runs in jsdom with Testing Library setup from `test/setupTests.ts`. Tests are colocated with source files and match `*.test.*` or `*.spec.*`.
+
+Use the narrowest relevant validation while developing, then run the broader checks before handoff:
+
+```bash
+npm test
+npm run lint
+npm run check
+npm run format:check
+```
+
+For changes involving Next.js runtime behavior, also verify the affected flow in a running `npm run dev` instance. A passing typecheck does not validate client navigation, cookies, Supabase session restoration, or route-handler behavior.
+
+## Security and data rules
+
+- Do not commit `.env.local`, tokens, keys, OTPs, or user data.
+- Keep service-role operations server-only and narrowly scoped.
+- Validate request bodies at the API boundary.
+- Authenticate and authorize before reading or mutating protected records.
+- Preserve RLS policies and use database RPCs for multi-record state transitions that must be atomic.
+- Do not log secrets, bearer tokens, or sensitive patient information.
+- Treat OTP verification, match acceptance, request fulfillment, rewards, and cooldown updates as security-sensitive state transitions.
+- Retain the product disclaimer: LyfeBlood coordinates connections; licensed medical professionals make clinical decisions.
+
+## Documentation consistency
+
+`README.md` is the developer-facing setup and project overview. When commands, required environment variables, major routes, or architecture change, update both `README.md` and this file in the same change.

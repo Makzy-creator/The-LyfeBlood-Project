@@ -196,6 +196,35 @@ describe('POST /api/requests/create', () => {
     expect(rpc).not.toHaveBeenCalled()
   })
 
+  it('does not fail creation when notification or matching side effects fail', async () => {
+    const { POST } = await import('./route.js')
+    notifyRequestRecipients.mockRejectedValueOnce(new Error('notification unavailable'))
+    createMatchesForRequest.mockRejectedValueOnce(new Error('matching unavailable'))
+
+    const response = await POST(makeRequest(validPayload))
+    const json = await response.json()
+
+    expect(response.status).toBe(201)
+    expect(json.request.id).toBe('request-123')
+    expect(json.sideEffectWarnings).toEqual([
+      'request_created_notification_failed',
+      'matching_failed',
+    ])
+  })
+
+  it('returns a server error when the creation RPC fails', async () => {
+    const { POST } = await import('./route.js')
+    rpc.mockResolvedValueOnce({ data: null, error: new Error('database rejected request') })
+
+    const response = await POST(makeRequest(validPayload))
+    const json = await response.json()
+
+    expect(response.status).toBe(500)
+    expect(json.error).toBe('Failed to create request')
+    expect(notifyRequestRecipients).not.toHaveBeenCalled()
+    expect(createMatchesForRequest).not.toHaveBeenCalled()
+  })
+
   it('derives ownership from the authenticated user instead of client input', async () => {
     const { POST } = await import('./route.js')
 

@@ -182,6 +182,7 @@ export default function LoginPage() {
             {/* Email */}
             <div>
               <label
+                htmlFor="login-email"
                 style={{
                   display: 'block',
                   fontSize: '12px',
@@ -193,6 +194,8 @@ export default function LoginPage() {
                 Email Address
               </label>
               <input
+                id="login-email"
+                name="email"
                 style={inputStyle}
                 type="email"
                 placeholder="you@example.com"
@@ -208,6 +211,7 @@ export default function LoginPage() {
             {/* Password */}
             <div>
               <label
+                htmlFor="login-password"
                 style={{
                   display: 'block',
                   fontSize: '12px',
@@ -220,6 +224,8 @@ export default function LoginPage() {
               </label>
               <div style={{ position: 'relative' }}>
                 <input
+                  id="login-password"
+                  name="password"
                   style={{ ...inputStyle, paddingRight: '48px' }}
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Your password"
@@ -232,6 +238,8 @@ export default function LoginPage() {
                 />
                 <button
                   type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
                   onClick={() => setShowPassword((v) => !v)}
                   style={{
                     position: 'absolute',
@@ -242,9 +250,12 @@ export default function LoginPage() {
                     border: 'none',
                     cursor: 'pointer',
                     color: '#6B6B6B',
-                    padding: 0,
+                    padding: '10px',
+                    minWidth: '44px',
+                    minHeight: '44px',
                     display: 'flex',
                     alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -344,7 +355,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <style jsx global>{`
+      <style>{`
         * {
           box-sizing: border-box;
           -webkit-font-smoothing: antialiased;

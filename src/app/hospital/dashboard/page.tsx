@@ -32,7 +32,7 @@ function canDeleteRequest(request) {
 }
 
 // ─── NEW REQUEST MODAL SHEET ──────────────────────────────────────────────────
-function NewRequestSheet({ onClose, onSubmit, isSOS }) {
+function NewRequestSheet({ onClose, onSubmit, isSOS, isSubmitting, submitError }) {
   const [form, setForm] = useState({
     bloodGroup: '',
     ward: '',
@@ -81,7 +81,11 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
       />
 
       {/* Sheet */}
-      <div
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (canSubmit && !isSubmitting) onSubmit({ ...form, isSOS })
+        }}
         style={{
           position: 'relative',
           width: '100%',
@@ -135,7 +139,9 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
             </h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            disabled={isSubmitting}
             style={{
               background: 'none',
               border: 'none',
@@ -156,6 +162,22 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
             gap: '16px',
           }}
         >
+          {submitError && (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                padding: '10px 12px',
+                borderRadius: '8px',
+                backgroundColor: '#FADBD8',
+                color: '#922B21',
+                fontSize: '13px',
+                fontWeight: '700',
+              }}
+            >
+              {submitError}
+            </p>
+          )}
           {isSOS && (
             <div
               style={{
@@ -192,6 +214,7 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
                 <button
                   key={g}
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => setForm((f) => ({ ...f, bloodGroup: g }))}
                   style={{
                     background: 'none',
@@ -220,6 +243,7 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
               style={{ ...inputStyle, cursor: 'pointer' }}
               value={form.ward}
               onChange={(e) => setForm((f) => ({ ...f, ward: e.target.value }))}
+              disabled={isSubmitting}
             >
               <option value="">Select ward</option>
               <option>Accident & Emergency</option>
@@ -243,6 +267,7 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
                 <button
                   key={n}
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => setForm((f) => ({ ...f, unitsNeeded: n }))}
                   style={{
                     width: '40px',
@@ -275,6 +300,7 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
               placeholder="e.g. FMC-AE-2077"
               value={form.patientCode}
               onChange={(e) => setForm((f) => ({ ...f, patientCode: e.target.value }))}
+              disabled={isSubmitting}
             />
           </div>
 
@@ -294,6 +320,7 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
               placeholder="Brief clinical context for the donor (no diagnostic criteria)"
               value={form.urgencyNote}
               onChange={(e) => setForm((f) => ({ ...f, urgencyNote: e.target.value }))}
+              disabled={isSubmitting}
             />
           </div>
 
@@ -307,18 +334,22 @@ function NewRequestSheet({ onClose, onSubmit, isSOS }) {
             }}
           >
             <PrimaryButton
-              onClick={() => {
-                if (canSubmit) onSubmit({ ...form, isSOS })
-              }}
-              disabled={!canSubmit}
+              type="submit"
+              disabled={!canSubmit || isSubmitting}
               icon={isSOS ? AlertTriangle : Plus}
             >
-              {isSOS ? 'Trigger SOS Broadcast' : 'Post Blood Request'}
+              {isSubmitting
+                ? 'Creating...'
+                : isSOS
+                  ? 'Trigger SOS Broadcast'
+                  : 'Post Blood Request'}
             </PrimaryButton>
-            <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
+            <SecondaryButton onClick={onClose} disabled={isSubmitting}>
+              Cancel
+            </SecondaryButton>
           </div>
         </div>
-      </div>
+      </form>
     </div>
   )
 }
@@ -338,6 +369,8 @@ export default function HospitalDashboardPage() {
 
   const [showSheet, setShowSheet] = useState(false)
   const [sheetIsSOS, setSheetIsSOS] = useState(false)
+  const [requestSubmitting, setRequestSubmitting] = useState(false)
+  const [requestError, setRequestError] = useState('')
   const [sosPressed, setSosPressed] = useState(false)
   const [acceptedMatches, setAcceptedMatches] = useState([])
   const [matchesLoading, setMatchesLoading] = useState(false)
@@ -382,20 +415,27 @@ export default function HospitalDashboardPage() {
   }, [isAuthenticated, loadAcceptedMatches])
 
   const handleNewRequest = async (formData) => {
-    await addRequest({
-      tier: formData.isSOS ? 'sos' : 'standard',
-      bloodGroup: formData.bloodGroup,
-      unitsNeeded: formData.unitsNeeded,
-      unitsFulfilled: 0,
-      hospitalName: currentUser?.hospital || 'Federal Medical Centre Owerri',
-      ward: formData.ward,
-      patientCode: formData.patientCode || `FMC-${Date.now().toString().slice(-4)}`,
-      status: REQUEST_STATUS.PENDING,
-      requestedBy: 'hospital_officer',
-      urgencyNote: formData.urgencyNote,
-      location: currentUser?.location || 'Owerri Municipal, Imo State',
-    })
-    setShowSheet(false)
+    setRequestSubmitting(true)
+    setRequestError('')
+    try {
+      await addRequest({
+        tier: formData.isSOS ? 'sos' : 'standard',
+        bloodGroup: formData.bloodGroup,
+        unitsNeeded: formData.unitsNeeded,
+        unitsFulfilled: 0,
+        hospitalName: currentUser?.hospital || 'Federal Medical Centre Owerri',
+        ward: formData.ward,
+        patientCode: formData.patientCode || `FMC-${Date.now().toString().slice(-4)}`,
+        status: REQUEST_STATUS.PENDING,
+        urgencyNote: formData.urgencyNote,
+        location: currentUser?.location || 'Owerri Municipal, Imo State',
+      })
+      setShowSheet(false)
+    } catch (error) {
+      setRequestError(error?.message ?? 'Failed to create request.')
+    } finally {
+      setRequestSubmitting(false)
+    }
   }
 
   const handleVerifyCheckIn = async () => {
@@ -663,6 +703,7 @@ export default function HospitalDashboardPage() {
             onPointerUp={() => setSosPressed(false)}
             onPointerLeave={() => setSosPressed(false)}
             onClick={() => {
+              setRequestError('')
               setSheetIsSOS(true)
               setShowSheet(true)
             }}
@@ -699,6 +740,7 @@ export default function HospitalDashboardPage() {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={() => {
+                setRequestError('')
                 setSheetIsSOS(false)
                 setShowSheet(true)
               }}
@@ -1302,9 +1344,13 @@ export default function HospitalDashboardPage() {
       {/* New Request Sheet */}
       {showSheet && (
         <NewRequestSheet
-          onClose={() => setShowSheet(false)}
+          onClose={() => {
+            if (!requestSubmitting) setShowSheet(false)
+          }}
           onSubmit={handleNewRequest}
           isSOS={sheetIsSOS}
+          isSubmitting={requestSubmitting}
+          submitError={requestError}
         />
       )}
 

@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import Link from 'next/link'
 import {
   Heart,
   Droplets,
@@ -9,7 +10,6 @@ import {
   ArrowRight,
   Shield,
 } from 'lucide-react'
-import PrimaryButton from '@/components/ui/PrimaryButton'
 import RequestCard from '@/components/ui/RequestCard'
 import BloodGroupTag from '@/components/ui/BloodGroupTag'
 import { useApp } from '@/context/AppContext'
@@ -77,7 +77,7 @@ export default function LandingPage() {
             <span style={{ color: '#C0392B' }}>Lyfe</span>
             <span style={{ color: '#1A1A1A' }}>Blood</span>
           </span>
-          <a
+          <Link
             href="/login"
             style={{
               fontSize: '14px',
@@ -90,7 +90,7 @@ export default function LandingPage() {
             }}
           >
             Sign In
-          </a>
+          </Link>
         </header>
 
         {/* ── HERO ─────────────────────────────────────────────────── */}
@@ -564,9 +564,27 @@ export default function LandingPage() {
             gap: '10px',
           }}
         >
-          <a href="/login" style={{ textDecoration: 'none' }}>
-            <PrimaryButton icon={ArrowRight}>Get Started — It's Free</PrimaryButton>
-          </a>
+          <Link
+            href="/login"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              width: '100%',
+              minHeight: '52px',
+              padding: '14px 16px',
+              backgroundColor: '#C0392B',
+              color: '#FFFFFF',
+              fontSize: '15px',
+              fontWeight: '600',
+              borderRadius: '8px',
+              textDecoration: 'none',
+            }}
+          >
+            <ArrowRight size={18} strokeWidth={2.2} />
+            Get Started — It's Free
+          </Link>
           <p
             style={{
               textAlign: 'center',
