@@ -13,6 +13,26 @@ const VALID_TIERS = ['Standard', 'Urgent', 'SOS']
 const VALID_REQUEST_TYPES = ['Scheduled', 'Emergency']
 const PROFILE_SELECT = 'id, email, role'
 
+function databaseErrorDetails(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return { message: error instanceof Error ? error.message : String(error) }
+  }
+
+  const candidate = error as {
+    code?: unknown
+    message?: unknown
+    details?: unknown
+    hint?: unknown
+  }
+
+  return {
+    code: typeof candidate.code === 'string' ? candidate.code : undefined,
+    message: typeof candidate.message === 'string' ? candidate.message : 'Unknown database error',
+    details: typeof candidate.details === 'string' ? candidate.details : undefined,
+    hint: typeof candidate.hint === 'string' ? candidate.hint : undefined,
+  }
+}
+
 function notificationDeliveryFor(requestType: string, scheduledFor: string | null) {
   if (requestType !== 'Scheduled' || !scheduledFor) return new Date().toISOString()
   const deliverAt = new Date(scheduledFor).getTime() - 2 * 86_400_000
@@ -165,7 +185,13 @@ export async function POST(request: NextRequest) {
       }
     )
 
-    if (createError) throw createError
+    if (createError) {
+      console.error(
+        '[POST /api/requests/create] create_blood_request RPC failed',
+        databaseErrorDetails(createError)
+      )
+      throw createError
+    }
 
     const deliverAt = notificationDeliveryFor(request_type, scheduledForValue)
     const sideEffectWarnings: string[] = []
