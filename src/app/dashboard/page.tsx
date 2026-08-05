@@ -7,9 +7,10 @@ import RequestCard from '@/components/ui/RequestCard'
 import PrimaryButton from '@/components/ui/PrimaryButton'
 import SecondaryButton from '@/components/ui/SecondaryButton'
 import BloodGroupTag from '@/components/ui/BloodGroupTag'
+import RequestDeleteControl from '@/components/ui/RequestDeleteControl'
 import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from '@/context/AppContext'
 import { apiGetMatches, apiSendMatches } from '@/utils/api'
-import { Droplets, LogOut, AlertTriangle, Bell, Plus, Trash2, X } from 'lucide-react'
+import { Droplets, LogOut, AlertTriangle, Bell, Plus, X } from 'lucide-react'
 
 const ROLE_HOME_CONFIG = {
   donor: {
@@ -42,13 +43,6 @@ const ROLE_HOME_CONFIG = {
     cta: 'New Procurement Request',
     ctaIcon: AlertTriangle,
   },
-}
-
-const DELETE_AFTER_MS = 24 * 60 * 60 * 1000
-
-function canDeleteRequest(request) {
-  const createdAt = new Date(request.requestDate).getTime()
-  return Number.isFinite(createdAt) && Date.now() - createdAt >= DELETE_AFTER_MS
 }
 
 function PatientRequestSheet({ onClose, onSubmit, isSubmitting, submitError }) {
@@ -360,7 +354,6 @@ export default function DashboardPage() {
   const [requestSubmitting, setRequestSubmitting] = useState(false)
   const [requestError, setRequestError] = useState('')
   const [requestSuccess, setRequestSuccess] = useState('')
-  const [deletingRequestId, setDeletingRequestId] = useState(null)
   const [matchingState, setMatchingState] = useState({
     loading: false,
     request: null,
@@ -485,24 +478,6 @@ export default function DashboardPage() {
         sending: false,
         error: error?.message ?? 'Unable to send donor requests.',
       }))
-    }
-  }
-
-  const handleDeleteRequest = async (request) => {
-    if (!canDeleteRequest(request) || deletingRequestId) return
-    const confirmed = window.confirm('Delete this request permanently?')
-    if (!confirmed) return
-
-    setDeletingRequestId(request.id)
-    setRequestError('')
-    setRequestSuccess('')
-    try {
-      await deleteRequest(request.id)
-      setRequestSuccess('Request deleted.')
-    } catch (error) {
-      setRequestError(error?.message ?? 'Unable to delete request.')
-    } finally {
-      setDeletingRequestId(null)
     }
   }
 
@@ -920,33 +895,13 @@ export default function DashboardPage() {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {activeRequests.map((req) => (
-              <div key={req.id} style={{ position: 'relative' }}>
+              <div key={req.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <RequestCard request={req} onClick={() => router.push(`/requests/${req.id}`)} />
-                {canDeleteRequest(req) && (
-                  <button
-                    type="button"
-                    aria-label="Delete request"
-                    onClick={() => handleDeleteRequest(req)}
-                    disabled={deletingRequestId === req.id}
-                    style={{
-                      position: 'absolute',
-                      top: '10px',
-                      right: '10px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '8px',
-                      border: '1px solid #F1948A',
-                      backgroundColor: '#FFFFFF',
-                      color: '#922B21',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: deletingRequestId === req.id ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                )}
+                <RequestDeleteControl
+                  request={req}
+                  onDelete={() => deleteRequest(req.id)}
+                  compact
+                />
               </div>
             ))}
           </div>

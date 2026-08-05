@@ -125,7 +125,7 @@ export default function RequestCard({ request, onClick }) {
             <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
               <Droplets size={11} color="#C0392B" />
               <span style={{ fontSize: '11px', color: '#4A4A4A' }}>
-                {request.unitsFulfilled}/{request.unitsNeeded} units
+                {request.unitsNeeded} {request.unitsNeeded === 1 ? 'unit' : 'units'} requested
               </span>
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>

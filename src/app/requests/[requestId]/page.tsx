@@ -11,6 +11,7 @@ import {
   Navigation,
   Phone,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import TopAppBar from '@/components/ui/TopAppBar'
 import BottomNavBar from '@/components/ui/BottomNavBar'
@@ -19,6 +20,7 @@ import RequestStatusBadge from '@/components/ui/RequestStatusBadge'
 import PrimaryButton from '@/components/ui/PrimaryButton'
 import SecondaryButton from '@/components/ui/SecondaryButton'
 import DonationJourney from '@/components/ui/DonationJourney'
+import RequestDeleteControl from '@/components/ui/RequestDeleteControl'
 import { REQUEST_STATUS, useApp } from '@/context/AppContext'
 import { apiGetMatches } from '@/utils/api'
 import { supabase } from '@/lib/supabase-client'
@@ -72,6 +74,7 @@ function normalizeBloodRequest(r) {
     patientCode: r.patient_ref ?? r.patientCode ?? null,
     status: normalizeRequestStatus(r.status),
     requestedBy: r.requested_by ?? r.requestedBy ?? null,
+    hospitalId: r.hospital_id ?? r.hospitalId ?? null,
     requestDate: r.created_at ?? r.requestDate ?? new Date().toISOString(),
     urgencyNote: r.urgency_note ?? r.urgencyNote ?? null,
     location: r.location ?? null,
@@ -127,7 +130,13 @@ export default function RequestDetailsPage() {
   const router = useRouter()
   const params = useParams()
   const requestId = params.requestId as string
-  const { currentUser, isAuthenticated, markAllNotificationsRead, updateRequestStatus } = useApp()
+  const {
+    currentUser,
+    isAuthenticated,
+    markAllNotificationsRead,
+    updateRequestStatus,
+    deleteRequest,
+  } = useApp()
   const [request, setRequest] = useState(null)
   const [requestLoading, setRequestLoading] = useState(true)
   const [requestNotFound, setRequestNotFound] = useState(false)
@@ -201,6 +210,10 @@ export default function RequestDetailsPage() {
   const homeRoute = ROLE_HOME_ROUTE[role] ?? '/dashboard'
   const isHospital = role === 'hospital' || role === 'hospital_officer'
   const isPatient = ['requester', 'patient', 'patient_family'].includes(role)
+  const canManageRequest =
+    role === 'admin' ||
+    request.requestedBy === currentUser.id ||
+    request.hospitalId === currentUser.id
 
   if (requestLoading) {
     return (
@@ -297,6 +310,11 @@ export default function RequestDetailsPage() {
     }
   }
 
+  const handleDeleteRequest = async () => {
+    await deleteRequest(request.id)
+    router.replace('/requests/history')
+  }
+
   const statusActions = isHospital
     ? [
         request.status === REQUEST_STATUS.PENDING && {
@@ -382,7 +400,11 @@ export default function RequestDetailsPage() {
               <RequestStatusBadge status={request.status} size="sm" />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-              <DetailRow label="Units" value={`${request.unitsFulfilled}/${request.unitsNeeded}`} />
+              <DetailRow
+                label="Units requested"
+                value={`${request.unitsNeeded} ${request.unitsNeeded === 1 ? 'unit' : 'units'}`}
+              />
+              <DetailRow label="Units fulfilled" value={String(request.unitsFulfilled)} />
               <DetailRow label="Priority" value={request.tier === 'sos' ? 'SOS' : 'Standard'} />
               <DetailRow label="Case Ref" value={request.patientCode} />
               <DetailRow label="Location" value={request.location} />
@@ -401,6 +423,15 @@ export default function RequestDetailsPage() {
               </p>
             )}
           </Section>
+
+          {canManageRequest && (
+            <Section title="Delete Request" icon={Trash2}>
+              <p style={{ margin: 0, fontSize: '12px', color: '#4A4A4A', lineHeight: '1.5' }}>
+                Requests become eligible for permanent deletion 24 hours after they are created.
+              </p>
+              <RequestDeleteControl request={request} onDelete={handleDeleteRequest} />
+            </Section>
+          )}
 
           <DonationJourney request={request} matches={requestMatches} />
 

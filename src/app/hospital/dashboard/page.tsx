@@ -12,24 +12,17 @@ import {
   MapPin,
   Radio,
   RefreshCw,
-  Trash2,
 } from 'lucide-react'
 import TopAppBar from '@/components/ui/TopAppBar'
 import BottomNavBar from '@/components/ui/BottomNavBar'
 import BloodGroupTag from '@/components/ui/BloodGroupTag'
 import RequestCard from '@/components/ui/RequestCard'
+import RequestDeleteControl from '@/components/ui/RequestDeleteControl'
 import RequestStatusBadge from '@/components/ui/RequestStatusBadge'
 import PrimaryButton from '@/components/ui/PrimaryButton'
 import SecondaryButton from '@/components/ui/SecondaryButton'
 import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from '@/context/AppContext'
 import { apiGetMatches, apiUpdateHospitalMatchStatus, apiVerifyToken } from '@/utils/api'
-
-const DELETE_AFTER_MS = 24 * 60 * 60 * 1000
-
-function canDeleteRequest(request) {
-  const createdAt = new Date(request.requestDate).getTime()
-  return Number.isFinite(createdAt) && Date.now() - createdAt >= DELETE_AFTER_MS
-}
 
 // ─── NEW REQUEST MODAL SHEET ──────────────────────────────────────────────────
 function NewRequestSheet({ onClose, onSubmit, isSOS, isSubmitting, submitError }) {
@@ -380,7 +373,6 @@ export default function HospitalDashboardPage() {
   const [checkInError, setCheckInError] = useState(null)
   const [checkInSuccess, setCheckInSuccess] = useState(null)
   const [matchStatusLoading, setMatchStatusLoading] = useState(null)
-  const [deletingRequestId, setDeletingRequestId] = useState(null)
   const [statusAction, setStatusAction] = useState({
     id: null,
     loading: false,
@@ -518,27 +510,6 @@ export default function HospitalDashboardPage() {
         error: error?.message ?? 'Unable to update request status.',
         success: null,
       })
-    }
-  }
-
-  const handleDeleteRequest = async (request) => {
-    if (!canDeleteRequest(request) || deletingRequestId) return
-    const confirmed = window.confirm('Delete this request permanently?')
-    if (!confirmed) return
-
-    setDeletingRequestId(request.id)
-    setStatusAction({ id: request.id, loading: false, error: null, success: null })
-    try {
-      await deleteRequest(request.id)
-    } catch (error) {
-      setStatusAction({
-        id: request.id,
-        loading: false,
-        error: error?.message ?? 'Unable to delete request.',
-        success: null,
-      })
-    } finally {
-      setDeletingRequestId(null)
     }
   }
 
@@ -1164,33 +1135,13 @@ export default function HospitalDashboardPage() {
             >
               {activeRequests.map((req) => (
                 <div key={req.id}>
-                  <div style={{ position: 'relative' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <RequestCard request={req} onClick={() => router.push(`/requests/${req.id}`)} />
-                    {canDeleteRequest(req) && (
-                      <button
-                        type="button"
-                        aria-label="Delete request"
-                        onClick={() => handleDeleteRequest(req)}
-                        disabled={deletingRequestId === req.id}
-                        style={{
-                          position: 'absolute',
-                          top: '10px',
-                          right: '10px',
-                          width: '32px',
-                          height: '32px',
-                          borderRadius: '8px',
-                          border: '1px solid #F1948A',
-                          backgroundColor: '#FFFFFF',
-                          color: '#922B21',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: deletingRequestId === req.id ? 'not-allowed' : 'pointer',
-                        }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    )}
+                    <RequestDeleteControl
+                      request={req}
+                      onDelete={() => deleteRequest(req.id)}
+                      compact
+                    />
                   </div>
                   {/* Quick status advance controls */}
                   {![REQUEST_STATUS.FULFILLED, REQUEST_STATUS.CANCELLED].includes(req.status) && (

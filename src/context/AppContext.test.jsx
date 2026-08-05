@@ -58,6 +58,23 @@ function Harness() {
   )
 }
 
+function DefaultUnitHarness() {
+  const { addRequest } = useApp()
+  return (
+    <button
+      onClick={() =>
+        addRequest({
+          hospitalName: 'Federal Medical Centre Owerri',
+          bloodGroup: 'O+',
+          tier: 'standard',
+        })
+      }
+    >
+      Create default
+    </button>
+  )
+}
+
 describe('AppProvider addRequest', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -105,5 +122,22 @@ describe('AppProvider addRequest', () => {
 
     await waitFor(() => expect(document.body.dataset.creationError).toBe('Creation failed'))
     expect(screen.getByTestId('request-count')).toHaveTextContent('0')
+  })
+
+  it('explicitly submits one unit when the input is untouched', async () => {
+    apiCreateRequest.mockResolvedValue({
+      request: { id: 'request-123', units_needed: 1 },
+    })
+
+    render(
+      <AppProvider>
+        <DefaultUnitHarness />
+      </AppProvider>
+    )
+    fireEvent.click(screen.getByText('Create default'))
+
+    await waitFor(() =>
+      expect(apiCreateRequest).toHaveBeenCalledWith(expect.objectContaining({ units_needed: 1 }))
+    )
   })
 })

@@ -5,6 +5,7 @@ import { ChevronLeft, ClipboardList } from 'lucide-react'
 import TopAppBar from '@/components/ui/TopAppBar'
 import BottomNavBar from '@/components/ui/BottomNavBar'
 import RequestCard from '@/components/ui/RequestCard'
+import RequestDeleteControl from '@/components/ui/RequestDeleteControl'
 import { REQUEST_STATUS, useApp } from '@/context/AppContext'
 
 const ROLE_HOME_ROUTE = {
@@ -21,7 +22,8 @@ function isDonorRole(role) {
 
 export default function RequestHistoryPage() {
   const router = useRouter()
-  const { currentUser, isAuthenticated, bloodRequests, markAllNotificationsRead } = useApp()
+  const { currentUser, isAuthenticated, bloodRequests, markAllNotificationsRead, deleteRequest } =
+    useApp()
 
   useEffect(() => {
     if (!isAuthenticated) router.push('/login')
@@ -120,11 +122,22 @@ export default function RequestHistoryPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {visibleRequests.map((request) => (
-                <RequestCard
+                <div
                   key={request.id}
-                  request={request}
-                  onClick={donor ? undefined : () => router.push(`/requests/${request.id}`)}
-                />
+                  style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}
+                >
+                  <RequestCard
+                    request={request}
+                    onClick={donor ? undefined : () => router.push(`/requests/${request.id}`)}
+                  />
+                  {!donor && (
+                    <RequestDeleteControl
+                      request={request}
+                      onDelete={() => deleteRequest(request.id)}
+                      compact
+                    />
+                  )}
+                </div>
               ))}
             </div>
           )}

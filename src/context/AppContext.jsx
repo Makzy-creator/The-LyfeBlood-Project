@@ -374,7 +374,7 @@ export function AppProvider({ children }) {
         hospital_name: newRequest.hospitalName,
         blood_type_needed: newRequest.bloodGroup,
         urgency_tier: newRequest.tier === 'sos' ? 'SOS' : 'Standard',
-        units_needed: newRequest.unitsNeeded,
+        units_needed: Number(newRequest.unitsNeeded ?? 1),
         patient_ref: newRequest.patientCode ?? newRequest.ward ?? null,
         location: newRequest.location ?? null,
         urgency_note: newRequest.urgencyNote ?? null,
