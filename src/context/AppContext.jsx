@@ -440,6 +440,7 @@ export function AppProvider({ children }) {
         login,
         logout,
         bloodRequests,
+        refreshBloodRequests,
         updateRequestStatus,
         addRequest,
         deleteRequest,

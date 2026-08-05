@@ -352,7 +352,7 @@ export default function MatchPage() {
     setRespondError(null)
     try {
       const response = await apiRespondToMatch({
-        match_id: matchId,
+        request_id: match.rawRequest.id,
         decision: 'Accepted',
       })
       if (!response?.otp || !response?.expires_at) {
@@ -384,7 +384,7 @@ export default function MatchPage() {
     setDeclining(true)
     setRespondError(null)
     try {
-      await apiRespondToMatch({ match_id: matchId, decision: 'Declined' })
+      await apiRespondToMatch({ request_id: match.rawRequest.id, decision: 'Declined' })
       setDeclined(true)
       dismissMatchAlert()
       await new Promise((r) => setTimeout(r, 800))

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Droplets, MapPin, Clock, Award, ChevronRight, X } from 'lucide-react'
 import TopAppBar from '@/components/ui/TopAppBar'
 import BottomNavBar from '@/components/ui/BottomNavBar'
@@ -27,6 +27,7 @@ function normalizeAssignedMatch(match) {
     urgencyNote: request.urgency_note ?? null,
     location: request.location ?? null,
     distanceKm: match.distance_km,
+    matchStatus: match.match_status,
   }
 }
 
@@ -77,28 +78,41 @@ export default function DonorHomePage() {
   const [matchesError, setMatchesError] = useState(null)
   const [rewardPoints, setRewardPoints] = useState(currentUser?.rewardPoints ?? 0)
 
+  const loadMatches = useCallback(async () => {
+    try {
+      const { matches } = await apiGetMatches()
+      setAssignedMatches((matches ?? []).map(normalizeAssignedMatch))
+      setMatchesError(null)
+    } catch (error) {
+      console.error('[DonorHome] Failed to load assigned matches:', error)
+      setAssignedMatches([])
+      setMatchesError(error.message ?? 'Failed to load matches')
+    }
+  }, [])
+
   useEffect(() => {
     if (!isAuthenticated) return
     refreshCurrentUser?.().catch((error) => {
       console.error('[DonorHome] Failed to refresh donor profile:', error)
     })
-    let alive = true
-    apiGetMatches()
-      .then(({ matches }) => {
-        if (!alive) return
-        setAssignedMatches((matches ?? []).map(normalizeAssignedMatch))
-        setMatchesError(null)
-      })
-      .catch((error) => {
-        if (!alive) return
-        console.error('[DonorHome] Failed to load assigned matches:', error)
-        setAssignedMatches([])
-        setMatchesError(error.message ?? 'Failed to load matches')
-      })
+    const initialLoad = window.setTimeout(loadMatches, 0)
+
+    const channel = supabase
+      .channel(`donor-matches-${currentUser?.id ?? 'unknown'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'matches', filter: `donor_id=eq.${currentUser?.id}` },
+        loadMatches
+      )
+      .subscribe()
+    const handleFocus = () => loadMatches()
+    window.addEventListener('focus', handleFocus)
     return () => {
-      alive = false
+      window.clearTimeout(initialLoad)
+      window.removeEventListener('focus', handleFocus)
+      supabase.removeChannel(channel)
     }
-  }, [isAuthenticated, refreshCurrentUser])
+  }, [currentUser?.id, isAuthenticated, loadMatches, refreshCurrentUser])
 
   useEffect(() => {
     if (!currentUser?.id) return
@@ -134,10 +148,14 @@ export default function DonorHomePage() {
     setToggling(false)
   }
 
-  const activeRequests = assignedMatches
+  const activeRequests = assignedMatches.filter((match) => match.matchStatus === 'Accepted')
   const realIncomingMatchAlert =
     incomingMatchAlert &&
-    assignedMatches.some((assignedMatch) => assignedMatch.matchId === incomingMatchAlert.matchId)
+    assignedMatches.some(
+      (assignedMatch) =>
+        assignedMatch.matchId === incomingMatchAlert.matchId &&
+        assignedMatch.matchStatus === 'Alerted'
+    )
       ? incomingMatchAlert
       : null
 

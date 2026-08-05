@@ -1,12 +1,14 @@
 'use client'
-import { useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronLeft, ClipboardList } from 'lucide-react'
 import TopAppBar from '@/components/ui/TopAppBar'
 import BottomNavBar from '@/components/ui/BottomNavBar'
 import RequestCard from '@/components/ui/RequestCard'
 import RequestDeleteControl from '@/components/ui/RequestDeleteControl'
-import { REQUEST_STATUS, useApp } from '@/context/AppContext'
+import { useApp } from '@/context/AppContext'
+import { apiGetMatches } from '@/utils/api'
+import { supabase } from '@/lib/supabase-client'
 
 const ROLE_HOME_ROUTE = {
   donor: '/donor/home',
@@ -20,21 +22,72 @@ function isDonorRole(role) {
   return role === 'donor'
 }
 
+function normalizeDonorMatch(match) {
+  const request = match.request ?? {}
+  return {
+    matchId: match.id,
+    id: request.id ?? match.request_id,
+    tier: request.urgency_tier === 'SOS' ? 'sos' : 'standard',
+    bloodGroup: request.blood_type_needed ?? null,
+    unitsNeeded: request.units_needed ?? 1,
+    hospitalName: request.hospital_name ?? 'Hospital',
+    ward: request.patient_ref ?? 'Blood request',
+    status: 'pending',
+    requestDate: match.notified_at ?? request.created_at ?? new Date().toISOString(),
+    urgencyNote: request.urgency_note ?? null,
+  }
+}
+
 export default function RequestHistoryPage() {
   const router = useRouter()
   const { currentUser, isAuthenticated, bloodRequests, markAllNotificationsRead, deleteRequest } =
     useApp()
+  const [donorMatches, setDonorMatches] = useState([])
+  const [donorMatchesError, setDonorMatchesError] = useState('')
 
   useEffect(() => {
     if (!isAuthenticated) router.push('/login')
   }, [isAuthenticated, router])
+
+  const loadDonorMatches = useCallback(async () => {
+    try {
+      const { matches } = await apiGetMatches()
+      setDonorMatches(
+        (matches ?? []).filter((match) => match.match_status === 'Alerted').map(normalizeDonorMatch)
+      )
+      setDonorMatchesError('')
+    } catch (error) {
+      setDonorMatches([])
+      setDonorMatchesError(error?.message ?? 'Unable to load available requests')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isAuthenticated || currentUser?.role !== 'donor') return
+    const initialLoad = window.setTimeout(loadDonorMatches, 0)
+    const channel = supabase
+      .channel(`available-donor-matches-${currentUser.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'matches', filter: `donor_id=eq.${currentUser.id}` },
+        loadDonorMatches
+      )
+      .subscribe()
+    const handleFocus = () => loadDonorMatches()
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      window.clearTimeout(initialLoad)
+      window.removeEventListener('focus', handleFocus)
+      supabase.removeChannel(channel)
+    }
+  }, [currentUser?.id, currentUser?.role, isAuthenticated, loadDonorMatches])
 
   if (!currentUser) return null
 
   const donor = isDonorRole(currentUser.role)
   const homeRoute = ROLE_HOME_ROUTE[currentUser.role] ?? '/dashboard'
   const visibleRequests = donor
-    ? bloodRequests.filter((request) => request.status !== REQUEST_STATUS.FULFILLED)
+    ? donorMatches
     : bloodRequests
 
   return (
@@ -116,7 +169,9 @@ export default function RequestHistoryPage() {
                   color: '#6B6B6B',
                 }}
               >
-                {donor ? 'No compatible requests yet' : 'No request history yet'}
+                {donor
+                  ? donorMatchesError || 'No requests have been assigned to you yet'
+                  : 'No request history yet'}
               </p>
             </section>
           ) : (
@@ -128,7 +183,11 @@ export default function RequestHistoryPage() {
                 >
                   <RequestCard
                     request={request}
-                    onClick={donor ? undefined : () => router.push(`/requests/${request.id}`)}
+                    onClick={() =>
+                      router.push(
+                        donor ? `/donor/match/${request.matchId}` : `/requests/${request.id}`
+                      )
+                    }
                   />
                   {!donor && (
                     <RequestDeleteControl

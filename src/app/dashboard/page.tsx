@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import TopAppBar from '@/components/ui/TopAppBar'
 import BottomNavBar from '@/components/ui/BottomNavBar'
@@ -10,7 +10,8 @@ import BloodGroupTag from '@/components/ui/BloodGroupTag'
 import RequestDeleteControl from '@/components/ui/RequestDeleteControl'
 import { useApp, REQUEST_STATUS, BLOOD_GROUPS } from '@/context/AppContext'
 import { apiGetMatches, apiSendMatches } from '@/utils/api'
-import { Droplets, LogOut, AlertTriangle, Bell, Plus, X } from 'lucide-react'
+import { supabase } from '@/lib/supabase-client'
+import { Droplets, LogOut, AlertTriangle, Bell, Plus, X, UserCheck } from 'lucide-react'
 
 const ROLE_HOME_CONFIG = {
   donor: {
@@ -344,6 +345,7 @@ export default function DashboardPage() {
     currentUser,
     isAuthenticated,
     bloodRequests,
+    refreshBloodRequests,
     addRequest,
     deleteRequest,
     logout,
@@ -354,6 +356,7 @@ export default function DashboardPage() {
   const [requestSubmitting, setRequestSubmitting] = useState(false)
   const [requestError, setRequestError] = useState('')
   const [requestSuccess, setRequestSuccess] = useState('')
+  const [acceptedMatchesByRequest, setAcceptedMatchesByRequest] = useState({})
   const [matchingState, setMatchingState] = useState({
     loading: false,
     request: null,
@@ -369,6 +372,52 @@ export default function DashboardPage() {
       router.push('/login')
     }
   }, [isAuthenticated, router])
+
+  const loadAcceptedMatches = useCallback(async () => {
+    try {
+      const { matches } = await apiGetMatches()
+      const accepted = {}
+      for (const match of matches ?? []) {
+        if (match.match_status !== 'Accepted') continue
+        accepted[match.request_id] = [...(accepted[match.request_id] ?? []), match]
+      }
+      setAcceptedMatchesByRequest(accepted)
+    } catch (error) {
+      console.error('[Dashboard] Failed to load accepted donor matches:', error)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isAuthenticated || !['patient_family', 'requester'].includes(currentUser?.role)) return
+
+    const refreshDashboard = () => {
+      loadAcceptedMatches()
+      refreshBloodRequests?.().catch((error) => {
+        console.error('[Dashboard] Failed to refresh requests:', error)
+      })
+    }
+    refreshDashboard()
+
+    const matchChannel = supabase
+      .channel(`requester-matches-${currentUser.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, refreshDashboard)
+      .subscribe()
+    const requestChannel = supabase
+      .channel(`requester-requests-${currentUser.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'blood_requests' },
+        refreshDashboard
+      )
+      .subscribe()
+    window.addEventListener('focus', refreshDashboard)
+
+    return () => {
+      window.removeEventListener('focus', refreshDashboard)
+      supabase.removeChannel(matchChannel)
+      supabase.removeChannel(requestChannel)
+    }
+  }, [currentUser?.id, currentUser?.role, isAuthenticated, loadAcceptedMatches, refreshBloodRequests])
 
   const handleOpenCreateRequest = () => {
     if (!['patient_family', 'requester'].includes(currentUser?.role)) return
@@ -897,6 +946,38 @@ export default function DashboardPage() {
             {activeRequests.map((req) => (
               <div key={req.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <RequestCard request={req} onClick={() => router.push(`/requests/${req.id}`)} />
+                {acceptedMatchesByRequest[req.id]?.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/requests/${req.id}`)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      minHeight: '42px',
+                      padding: '9px 12px',
+                      border: '1px solid #A9DFBF',
+                      borderRadius: '8px',
+                      backgroundColor: '#EAFAF1',
+                      color: '#196F3D',
+                      fontFamily: 'inherit',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <UserCheck size={17} />
+                    <span style={{ flex: 1, fontSize: '12px', fontWeight: '700' }}>
+                      Accepted by{' '}
+                      {acceptedMatchesByRequest[req.id][0].donor?.full_name ?? 'a donor'}
+                      {acceptedMatchesByRequest[req.id].length > 1
+                        ? ` and ${acceptedMatchesByRequest[req.id].length - 1} other${
+                            acceptedMatchesByRequest[req.id].length === 2 ? '' : 's'
+                          }`
+                        : ''}
+                    </span>
+                    <span style={{ fontSize: '11px', fontWeight: '800' }}>Coordinate →</span>
+                  </button>
+                )}
                 <RequestDeleteControl
                   request={req}
                   onDelete={() => deleteRequest(req.id)}

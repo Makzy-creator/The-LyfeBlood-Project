@@ -230,7 +230,7 @@ export async function apiCreateRequest(payload) {
 
 /**
  * Accept or decline a donor–request match.
- * @param {{ match_id: string, decision: 'Accepted' | 'Declined' }} payload
+ * @param {{ request_id: string, decision: 'Accepted' | 'Declined' }} payload
  * @returns {{ message, status, otp?, expires_at?, token_id? }}
  */
 export async function apiGetMatches(params = {}) {
@@ -247,7 +247,10 @@ export async function apiGetMatch(matchId) {
 }
 
 export async function apiRespondToMatch(payload) {
-  return supabase.rpc('respond_to_match', payload)
+  return apiFetch('/api/matches/respond', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function apiSendMatches(payload) {

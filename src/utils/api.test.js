@@ -52,3 +52,40 @@ describe('apiCreateRequest', () => {
     await expect(apiCreateRequest({})).rejects.toThrow('Unable to create this request')
   })
 })
+
+describe('apiRespondToMatch', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.restoreAllMocks()
+    window.sessionStorage.clear()
+    window.sessionStorage.setItem('lyfeblood.auth.token', 'session-token')
+  })
+
+  it('accepts a donor request through the authenticated response endpoint', async () => {
+    const payload = { request_id: 'request-123', decision: 'Accepted' }
+    const result = {
+      request_id: 'request-123',
+      match_id: 'match-123',
+      status: 'Accepted',
+      otp: '123456',
+      expires_at: '2026-08-05T12:15:00.000Z',
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+
+    const { apiRespondToMatch } = await import('./api.js')
+    await expect(apiRespondToMatch(payload)).resolves.toEqual(result)
+    expect(fetchMock).toHaveBeenCalledWith('/api/matches/respond', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer session-token',
+      },
+      body: JSON.stringify(payload),
+    })
+  })
+})
